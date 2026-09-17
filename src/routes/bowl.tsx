@@ -6,7 +6,7 @@ export const Route = createFileRoute("/bowl")({ component: BowlPage });
 
 function BowlPage() {
   return (
-    <GameShell title="데굴데굴 콩볼링" subtitle="스트라이크 다음엔 핀이 흩어져요">
+    <GameShell title="데굴데굴 콩볼링" subtitle="노란 핀을 쓰러뜨리면 다음 스테이지">
       <BowlGame />
     </GameShell>
   );

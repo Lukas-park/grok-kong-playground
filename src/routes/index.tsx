@@ -133,7 +133,7 @@ function Lobby() {
           <PlayCard
             to="/bowl"
             title="데굴데굴 콩볼링"
-            copy="콩을 굴려 기분 핀을 쓰러뜨려요"
+            copy="열쇠 핀으로 스테이지를 열어 가요"
             best={`${bowlBest}점`}
             beanMood="ok"
             theme={equipped}

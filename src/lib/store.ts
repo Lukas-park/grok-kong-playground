@@ -1,8 +1,9 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
+import { FIRST_STAGE, type StageId } from "@/lib/bowl-stages";
 import { THEMES, type Mood, type ThemeId } from "@/lib/themes";
 
-export const SAVE_VERSION = 1;
+export const SAVE_VERSION = 2;
 
 export type SaveState = {
   version: number;
@@ -13,6 +14,8 @@ export type SaveState = {
   todayMoodDate: string;
   climbBest: number;
   bowlBest: number;
+  bowlUnlocked: StageId[];
+  bowlStage: StageId;
   wateredDate: string;
   growStage: number;
 };
@@ -26,6 +29,8 @@ const defaults: SaveState = {
   todayMoodDate: "",
   climbBest: 0,
   bowlBest: 0,
+  bowlUnlocked: [FIRST_STAGE],
+  bowlStage: FIRST_STAGE,
   wateredDate: "",
   growStage: 1,
 };
@@ -45,6 +50,9 @@ function migrate(raw: Partial<SaveState> | undefined): SaveState {
   if (merged.todayMoodDate !== todayKey()) {
     merged.todayMood = null;
   }
+  if (!merged.bowlUnlocked?.length) merged.bowlUnlocked = [FIRST_STAGE];
+  if (!merged.bowlUnlocked.includes(FIRST_STAGE)) merged.bowlUnlocked = [FIRST_STAGE, ...merged.bowlUnlocked];
+  if (!merged.bowlStage || !merged.bowlUnlocked.includes(merged.bowlStage)) merged.bowlStage = FIRST_STAGE;
   return merged;
 }
 
@@ -58,6 +66,8 @@ type Actions = {
   equipTheme: (id: ThemeId) => void;
   recordClimb: (height: number, earned: number) => void;
   recordBowl: (score: number, earned: number) => void;
+  unlockBowlStage: (id: StageId) => boolean;
+  selectBowlStage: (id: StageId) => void;
 };
 
 export const usePlayground = create<SaveState & Actions>()(
@@ -117,6 +127,22 @@ export const usePlayground = create<SaveState & Actions>()(
           bowlBest: Math.max(get().bowlBest, score),
           clovers: get().clovers + earned,
         }),
+      unlockBowlStage: (id) => {
+        const state = get();
+        if (state.bowlUnlocked.includes(id)) {
+          set({ bowlStage: id });
+          return false;
+        }
+        set({
+          bowlUnlocked: [...state.bowlUnlocked, id],
+          bowlStage: id,
+        });
+        return true;
+      },
+      selectBowlStage: (id) => {
+        if (!get().bowlUnlocked.includes(id)) return;
+        set({ bowlStage: id });
+      },
     }),
     {
       name: "kong-playground-v1",
@@ -132,6 +158,8 @@ export const usePlayground = create<SaveState & Actions>()(
         todayMoodDate: s.todayMoodDate,
         climbBest: s.climbBest,
         bowlBest: s.bowlBest,
+        bowlUnlocked: s.bowlUnlocked,
+        bowlStage: s.bowlStage,
         wateredDate: s.wateredDate,
         growStage: s.growStage,
       }),

@@ -2,10 +2,20 @@ import { useEffect, useRef, useState } from "react";
 import { AdModal } from "@/components/ad-modal";
 import { GameBoot } from "@/components/game-boot";
 import { Button } from "@/components/ui/button";
-import { BEAN_BALL, CLOVER_ICON, bowlAssetList, drawSprite, waitForImages } from "@/lib/assets";
+import { BEAN_BALL, CLOVER_ICON, CLOVER_SPARK, bowlAssetList, drawSprite, waitForImages } from "@/lib/assets";
 import { sfx, unlockAudio } from "@/lib/audio";
+import {
+  BOWL_STAGES,
+  FIRST_STAGE,
+  buildStage,
+  mulberry,
+  nextLockedStage,
+  stageById,
+  type StageId,
+} from "@/lib/bowl-stages";
 import { usePlayground } from "@/lib/store";
 import { THEMES, type ThemeId } from "@/lib/themes";
+import { cn } from "@/lib/utils";
 
 type Body = {
   x: number;
@@ -18,17 +28,14 @@ type Body = {
   rot: number;
   alive: boolean;
   fallen: boolean;
+  key?: boolean;
 };
 
 type Pad = { x: number; y: number; w: number; h: number; kind: "slow" | "fast" };
 
-const FRAMES = 5;
-const LAYOUTS = ["기본 삼각", "두 덩이", "흩어진 핀", "벽 앵글", "지그재그", "난장판"];
+const FRAMES = 8;
 
-function drawPin(
-  ctx: CanvasRenderingContext2D,
-  p: Body,
-) {
+function drawPin(ctx: CanvasRenderingContext2D, p: Body) {
   ctx.save();
   ctx.translate(p.x, p.y);
   ctx.rotate(p.fallen ? 1.2 + p.rot * 0.15 : p.rot * 0.04);
@@ -40,14 +47,14 @@ function drawPin(
   ctx.bezierCurveTo(w * 0.58, 0.04 * h, w * 0.6, h * 0.42, 0, h * 0.5);
   ctx.bezierCurveTo(-w * 0.6, h * 0.42, -w * 0.58, 0.04 * h, -w * 0.26, -h * 0.08);
   ctx.bezierCurveTo(-w * 0.4, -h * 0.2, -w * 0.36, -h * 0.5, 0, -h * 0.5);
-  ctx.fillStyle = "#fffdf8";
+  ctx.fillStyle = p.key ? "#f3d36b" : "#fffdf8";
   ctx.fill();
-  ctx.strokeStyle = "#d9d0c4";
-  ctx.lineWidth = 1.6;
+  ctx.strokeStyle = p.key ? "#d9a441" : "#d9d0c4";
+  ctx.lineWidth = p.key ? 2.2 : 1.6;
   ctx.stroke();
-  ctx.fillStyle = "#61ae72";
+  ctx.fillStyle = p.key ? "#c45c28" : "#61ae72";
   ctx.fillRect(-w * 0.22, -h * 0.1, w * 0.44, 5);
-  drawSprite(ctx, CLOVER_ICON, 0, -h * 0.28, p.r * 1.55);
+  drawSprite(ctx, p.key ? CLOVER_SPARK : CLOVER_ICON, 0, -h * 0.28, p.r * 1.55);
   ctx.restore();
 }
 
@@ -61,10 +68,15 @@ export function BowlGame() {
     score: 0,
     message: "",
     bonus: 0,
-    layout: LAYOUTS[0],
+    layout: stageById(FIRST_STAGE).name,
+    key: false,
+    unlocked: "",
   });
   const [adOpen, setAdOpen] = useState(false);
   const bowlBest = usePlayground((s) => s.bowlBest);
+  const bowlUnlocked = usePlayground((s) => s.bowlUnlocked);
+  const bowlStage = usePlayground((s) => s.bowlStage);
+  const selectBowlStage = usePlayground((s) => s.selectBowlStage);
   const recordBowl = usePlayground((s) => s.recordBowl);
   const unlockTheme = usePlayground((s) => s.unlockTheme);
   const phaseRef = useRef(phase);
@@ -106,8 +118,11 @@ export function BowlGame() {
     let strikeThisGame = false;
     let trauma = 0;
     let lanePins = 10;
-    let chaos = 0;
-    let layoutName = LAYOUTS[0]!;
+    let stageId: StageId = usePlayground.getState().bowlStage;
+    let pendingStage: StageId | null = null;
+    let keyClaimed = false;
+    let remix = false;
+    let layoutName = stageById(stageId).name;
     const pads: Pad[] = [];
 
     const ball: Body = { x: 0, y: 0, ox: 0, oy: 0, vx: 0, vy: 0, r: 26, rot: 0, alive: true, fallen: false };
@@ -144,64 +159,53 @@ export function BowlGame() {
         rot: 0,
         alive: true,
         fallen: false,
+        key: false,
       });
-    }
-
-    function scatterPins(count: number, y0: number, y1: number, inset = 26) {
-      const placed: { x: number; y: number }[] = [];
-      let guard = 0;
-      while (placed.length < count && guard++ < 240) {
-        const x = laneLeft() + inset + Math.random() * (laneRight() - laneLeft() - inset * 2);
-        const y = y0 + Math.random() * (y1 - y0);
-        if (placed.every((q) => Math.hypot(q.x - x, q.y - y) > 34)) placed.push({ x, y });
-      }
-      placed.forEach((q) => addPin(q.x, q.y, 0.92 + Math.random() * 0.12));
     }
 
     function setupPins() {
       pins.length = 0;
       pads.length = 0;
-      const tier = Math.min(5, chaos);
-      layoutName = LAYOUTS[tier] ?? "난장판";
-      const left = laneLeft() + 30;
-      const right = laneRight() - 30;
-      const top = h * 0.15;
-      const mid = h * 0.26;
-      const low = h * 0.36;
-
-      if (tier === 0) {
-        const rows = [4, 3, 2, 1];
-        const gapY = Math.min(48, h * 0.055);
-        const gapX = Math.min(42, w * 0.09);
-        rows.forEach((count, row) => {
-          const y = top + row * gapY;
-          const rowW = (count - 1) * gapX;
-          for (let c = 0; c < count; c++) {
-            addPin(w / 2 - rowW / 2 + c * gapX, y, 0.86 + row * 0.05);
-          }
-        });
-      } else if (tier === 1) {
-        for (let i = 0; i < 4; i++) addPin(left + 10 + (i % 2) * 28, top + Math.floor(i / 2) * 40, 0.95);
-        for (let i = 0; i < 6; i++) addPin(right - 10 - (i % 3) * 28, top + Math.floor(i / 3) * 42, 0.95);
-      } else if (tier === 2) {
-        scatterPins(10, top, low);
-      } else if (tier === 3) {
-        for (let i = 0; i < 5; i++) addPin(left + 6, top + i * 38, 0.96);
-        for (let i = 0; i < 5; i++) addPin(right - 6, top + 18 + i * 38, 0.96);
-      } else if (tier === 4) {
-        for (let i = 0; i < 10; i++) {
-          const y = top + i * 22;
-          addPin(i % 2 === 0 ? left + 18 : right - 18, y, 0.94);
-        }
-      } else {
-        scatterPins(10, top, h * 0.48, 18);
+      keyClaimed = false;
+      const rng = mulberry(frame * 7919 + run * 104729 + (remix ? 333 : 0) + Math.floor(w * h) % 97);
+      const built = buildStage(stageId, { w, h, left: laneLeft(), right: laneRight() }, rng);
+      layoutName = stageById(stageId).name;
+      built.pins.forEach((p) => addPin(p.x, p.y, p.scale ?? 1));
+      pads.push(...built.pads);
+      if (pins.length) {
+        const far = [...pins].sort((a, b) => a.y - b.y);
+        const pick = far[Math.min(far.length - 1, 1 + Math.floor(rng() * Math.min(4, far.length)))];
+        if (pick) pick.key = true;
       }
-
-      if (tier >= 1) pads.push({ x: w * 0.26, y: h * 0.5, w: w * 0.22, h: 32, kind: "slow" });
-      if (tier >= 2) pads.push({ x: w * 0.52, y: h * 0.6, w: w * 0.2, h: 30, kind: "fast" });
-      if (tier >= 3) pads.push({ x: w * 0.33, y: h * 0.42, w: w * 0.18, h: 26, kind: "slow" });
-      if (tier >= 4) pads.push({ x: w * 0.22, y: h * 0.7, w: w * 0.2, h: 26, kind: "fast" });
+      if (remix) {
+        pads.push({
+          x: w * (0.25 + rng() * 0.3),
+          y: h * (0.45 + rng() * 0.2),
+          w: w * 0.18,
+          h: 24,
+          kind: rng() > 0.5 ? "fast" : "slow",
+        });
+      }
       lanePins = pins.length;
+    }
+
+    function claimKey() {
+      if (keyClaimed) return;
+      const keyPin = pins.find((p) => p.key);
+      if (!keyPin || !(keyPin.fallen || !keyPin.alive)) return;
+      keyClaimed = true;
+      const store = usePlayground.getState();
+      const next = nextLockedStage(store.bowlUnlocked);
+      if (next) {
+        store.unlockBowlStage(next);
+        pendingStage = next;
+        sfx.unlock();
+        trauma = Math.min(1, trauma + 0.4);
+      } else {
+        remix = true;
+        pendingStage = stageId;
+        sfx.collect();
+      }
     }
 
     function bounceWall(body: Body, rest: number) {
@@ -245,6 +249,10 @@ export function BowlGame() {
     }
 
     function newFrame() {
+      if (pendingStage) {
+        stageId = pendingStage;
+        pendingStage = null;
+      }
       setupPins();
       resetBall();
     }
@@ -296,23 +304,23 @@ export function BowlGame() {
       clearFallenPins();
 
       let message = knocked === 0 ? "거터예요" : doubled ? `2배 ${gained}점` : `${gained}점`;
+      const nextName = pendingStage ? stageById(pendingStage).name : "";
+      if (keyClaimed && nextName) message = `해금! ${nextName}`;
       if (throwNo === 1 && left === 0) {
-        message = doubled ? "스트라이크 · 2배" : "스트라이크";
+        message = keyClaimed && nextName ? `스트라이크 · ${nextName}` : doubled ? "스트라이크 · 2배" : "스트라이크";
         strikeThisGame = true;
         bonusShots += 2;
         sfx.strike();
         trauma = 0.7;
         frame += 1;
         throwNo = 1;
-        chaos += 1;
         if (frame > FRAMES) endGame();
         else newFrame();
       } else if (throwNo === 2 || left === 0) {
         if (left === 0) {
-          message = doubled ? "스페어 · 2배" : "스페어";
+          message = keyClaimed && nextName ? `스페어 · ${nextName}` : doubled ? "스페어 · 2배" : "스페어";
           bonusShots += 1;
           sfx.collect();
-          chaos += 1;
         }
         frame += 1;
         throwNo = 1;
@@ -322,6 +330,7 @@ export function BowlGame() {
         throwNo = 2;
         resetBall();
       }
+      const locked = nextLockedStage(usePlayground.getState().bowlUnlocked);
       setHud({
         frame: Math.min(frame, FRAMES),
         throwNo,
@@ -330,6 +339,8 @@ export function BowlGame() {
         message,
         bonus: bonusShots,
         layout: layoutName,
+        key: pins.some((p) => p.key && p.alive && !p.fallen),
+        unlocked: locked ? `노란 핀 → ${stageById(locked).name}` : remix ? "변주 레인" : "",
       });
     }
 
@@ -371,10 +382,12 @@ export function BowlGame() {
             p.fallen = true;
             sfx.pin();
             trauma = Math.min(1, trauma + 0.12);
+            if (p.key) claimKey();
           }
           if (p.y < 28 || p.y > h * 0.78) {
             p.alive = false;
             p.fallen = true;
+            if (p.key) claimKey();
           }
         }
         for (let i = 0; i < pins.length; i++) {
@@ -569,8 +582,8 @@ export function BowlGame() {
       <GameBoot ready={booted} label="레인을 닦는 중" />
       {phase === "play" ? (
         <div className="pointer-events-none absolute left-0 right-0 top-2 flex justify-center">
-          <div className="rounded-full bg-card/90 px-4 py-1.5 text-xs font-medium tabular-nums shadow-soft">
-            {hud.frame}/{FRAMES}프레임 · {hud.layout} · {hud.throwNo}번째 · {hud.score}점
+          <div className="max-w-[92%] rounded-full bg-card/90 px-4 py-1.5 text-center text-xs font-medium tabular-nums shadow-soft">
+            {hud.frame}/{FRAMES}세트 · {hud.layout} · {hud.score}점
             {hud.bonus > 0 ? ` · 다음 ${hud.bonus}투 2배` : ""}
             {hud.message ? ` · ${hud.message}` : ""}
           </div>
@@ -580,16 +593,48 @@ export function BowlGame() {
           <div className="w-full max-w-sm rounded-2xl bg-card p-6 text-center shadow-lift">
             {phase === "ready" ? (
               <>
-                <p className="text-sm text-muted-foreground">콩을 뒤로 당겼다 놓으면 데굴데굴 굴러가요</p>
+                <p className="text-sm text-muted-foreground">노란 열쇠 핀을 쓰러뜨리면 다음 세트가 열려요</p>
                 <h2 className="mt-1 text-2xl font-semibold">데굴데굴 콩볼링</h2>
-                <p className="text-sm text-muted-foreground">스트라이크·스페어 다음엔 핀이 흩어지고, 벽에 튕길 수 있어요</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {bowlUnlocked.length}/{BOWL_STAGES.length}스테이지 · 최고 {bowlBest}점
+                </p>
+                <div className="mt-3 flex flex-wrap justify-center gap-1.5">
+                  {BOWL_STAGES.map((s) => {
+                    const open = bowlUnlocked.includes(s.id);
+                    return (
+                      <button
+                        key={s.id}
+                        type="button"
+                        disabled={!open}
+                        onClick={() => open && selectBowlStage(s.id)}
+                        className={cn(
+                          "rounded-full px-2.5 py-1 text-[11px] font-medium",
+                          open ? "bg-pod text-foreground" : "bg-muted text-muted-foreground",
+                          bowlStage === s.id && "ring-2 ring-primary",
+                        )}
+                      >
+                        {open ? s.name : "잠김"}
+                      </button>
+                    );
+                  })}
+                </div>
                 <Button
                   className="mt-5 w-full"
                   onClick={() => {
                     unlockAudio();
                     setRun((n) => n + 1);
                     setPhase("play");
-                    setHud({ frame: 1, throwNo: 1, pins: 10, score: 0, message: "", bonus: 0, layout: LAYOUTS[0]! });
+                    setHud({
+                      frame: 1,
+                      throwNo: 1,
+                      pins: 10,
+                      score: 0,
+                      message: "",
+                      bonus: 0,
+                      layout: stageById(bowlStage).name,
+                      key: true,
+                      unlocked: "",
+                    });
                   }}
                 >
                   굴리기
@@ -599,12 +644,25 @@ export function BowlGame() {
               <>
                 <p className="text-sm text-muted-foreground">이번 점수</p>
                 <h2 className="mt-1 text-3xl font-semibold tabular-nums">{hud.score}점</h2>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  열린 스테이지 {bowlUnlocked.length}/{BOWL_STAGES.length}
+                </p>
                 <Button
                   className="mt-5 w-full"
                   onClick={() => {
                     setRun((n) => n + 1);
                     setPhase("play");
-                    setHud({ frame: 1, throwNo: 1, pins: 10, score: 0, message: "", bonus: 0, layout: LAYOUTS[0]! });
+                    setHud({
+                      frame: 1,
+                      throwNo: 1,
+                      pins: 10,
+                      score: 0,
+                      message: "",
+                      bonus: 0,
+                      layout: stageById(bowlStage).name,
+                      key: true,
+                      unlocked: "",
+                    });
                   }}
                 >
                   다시 굴리기
