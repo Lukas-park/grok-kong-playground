@@ -139,10 +139,12 @@ export function ClimbGame() {
       dashTo: 0,
       recoil: 0,
     };
+    let stageTheme: ThemeId = "sprout";
+    let themeFlash = 0;
+    let flyFlash = 0;
 
-    function themeAt(y: number): ThemeId {
-      const zi = Math.min(THEME_LIST.length - 1, Math.max(0, Math.floor(Math.max(0, y - 80) / ZONE)));
-      return THEME_LIST[zi]!.id;
+    function themeAt(_y?: number): ThemeId {
+      return stageTheme;
     }
 
     function resize() {
@@ -184,14 +186,19 @@ export function ClimbGame() {
       larva.hidden = 0;
       larva.mode = "chase";
       larva.recoil = 0;
+      stageTheme = "sprout";
+      themeFlash = 0;
       steerRef.current = 0.5;
       setKnob(0.5);
       plats.push({ x: w / 2, y: 40, w: 88, kind: "leaf", theme: "sprout", hp: 5 });
+      let fliesPlaced = 0;
       THEME_LIST.forEach((theme, zi) => {
         const z0 = 120 + zi * ZONE;
         const z1 = z0 + ZONE - 90;
         let y = z0;
-        let placedFly = zi < 1;
+        let placedFly = true;
+        const allowFly = (zi === 1 || zi === 4) && fliesPlaced < 2;
+        if (allowFly) placedFly = false;
         while (y < z1 - 50) {
           const side = Math.random() < 0.5 ? -1 : 1;
           const x = w / 2 + side * (40 + Math.random() * Math.min(110, w * 0.28));
@@ -199,9 +206,10 @@ export function ClimbGame() {
           const roll = Math.random();
           if (theme.id === "halloween" && y > z0 + 300 && y < z0 + 420 && !plats.some((p) => p.kind === "giant")) {
             kind = "giant";
-          } else if (!placedFly && y > z0 + 180 && roll < 0.12) {
+          } else if (!placedFly && y > z0 + ZONE * 0.5 && roll < 0.18) {
             kind = "fly";
             placedFly = true;
+            fliesPlaced += 1;
           } else if (roll < 0.08) kind = "clover";
           else if (roll < 0.14) kind = "spring";
           plats.push({
@@ -214,17 +222,10 @@ export function ClimbGame() {
           });
           y += 76 + Math.random() * 40;
         }
-        const topX = w / 2 + (zi % 2 === 0 ? -70 : 70);
-        plats.push({ x: topX, y: z1, w: 96, kind: "pod", theme: theme.id, hp: 5 });
-        if (!placedFly && zi >= 1) {
-          plats.push({
-            x: w / 2 - topX + w / 2,
-            y: z0 + ZONE * 0.45,
-            w: 78,
-            kind: "fly",
-            theme: theme.id,
-            hp: 5,
-          });
+        const next = THEME_LIST[zi + 1];
+        if (next) {
+          const topX = w / 2 + (zi % 2 === 0 ? -70 : 70);
+          plats.push({ x: topX, y: z1, w: 96, kind: "pod", theme: next.id, hp: 5 });
         }
       });
     }
@@ -286,17 +287,32 @@ export function ClimbGame() {
     function grantPod(plat: Plat, worldX: number, worldY: number) {
       const store = usePlayground.getState();
       store.unlockTheme(plat.theme, "ad");
-      fireworks(worldX, worldY, THEMES[plat.theme].name);
+      stageTheme = plat.theme;
+      themeFlash = 1;
+      trauma = Math.min(1, trauma + 0.7);
+      player.squash = 0.7;
+      fireworks(worldX, worldY, `${THEMES[plat.theme].name} 시작`, THEMES[plat.theme].accent);
       sfx.unlock();
+      sfx.strike();
     }
 
-    function summonFlies(worldX: number, worldY: number) {
+    function summonFlies(_worldX: number, _worldY: number) {
       flies.length = 0;
-      for (let i = 0; i < 3; i++) {
-        flies.push({ a: i * 2.1, x: worldX, y: worldY, shot: 0.15 * i, life: 3.4 });
+      flyFlash = 1;
+      trauma = Math.min(1, trauma + 0.85);
+      if (larva.alive) {
+        larva.stun = 3;
+        larva.mode = "chase";
       }
-      fireworks(worldX, worldY, "긴등기생파리", "#5a4638");
+      for (let i = 0; i < 8; i++) {
+        const edge = i % 4;
+        const x = edge === 0 ? 18 : edge === 1 ? w - 18 : 30 + Math.random() * (w - 60);
+        const y = edge === 2 ? cameraY + 30 : edge === 3 ? cameraY + h - 40 : cameraY + 40 + Math.random() * (h - 80);
+        flies.push({ a: i * 0.8, x, y, shot: 0.08 * i, life: 3.2 });
+      }
+      fireworks(player.x, player.y + 20, "파리가 막아요", "#5a4638");
       sfx.buzz();
+      sfx.pin();
     }
 
     function tryDoubleJump() {
@@ -325,6 +341,8 @@ export function ClimbGame() {
       const theme = THEMES[tId];
       extraCd = Math.max(0, extraCd - dt);
       groundedUntil = Math.max(0, groundedUntil - dt);
+      themeFlash = Math.max(0, themeFlash - dt * 1.35);
+      flyFlash = Math.max(0, flyFlash - dt * 2.2);
       hudTick += dt;
       if (hudTick > 0.08) {
         hudTick = 0;
@@ -454,11 +472,11 @@ export function ClimbGame() {
         f.a += dt * 3.2;
         const tx = (larva.alive ? stalkX + 16 : player.x) + Math.cos(f.a) * 34;
         const ty = (larva.alive ? larva.y + 36 : player.y + 18) + Math.sin(f.a) * 22;
-        f.x += (tx - f.x) * (1 - Math.exp(-8 * dt));
-        f.y += (ty - f.y) * (1 - Math.exp(-8 * dt));
+        f.x += (tx - f.x) * (1 - Math.exp(-16 * dt));
+        f.y += (ty - f.y) * (1 - Math.exp(-16 * dt));
         f.shot -= dt;
         if (larva.alive && f.life > 0 && f.shot <= 0) {
-          f.shot = 0.42;
+          f.shot = 0.28;
           const dx = stalkX - f.x;
           const dy = larva.y - f.y;
           const dist = Math.hypot(dx, dy) || 1;
@@ -515,6 +533,15 @@ export function ClimbGame() {
       g.addColorStop(1, theme.sky[1]);
       ctx!.fillStyle = g;
       ctx!.fillRect(-20, -20, w + 40, h + 40);
+
+      if (themeFlash > 0) {
+        ctx!.fillStyle = `rgba(255,253,248,${Math.min(0.85, themeFlash)})`;
+        ctx!.fillRect(-20, -20, w + 40, h + 40);
+      }
+      if (flyFlash > 0) {
+        ctx!.fillStyle = `rgba(42,36,28,${flyFlash * 0.35})`;
+        ctx!.fillRect(-20, -20, w + 40, h + 40);
+      }
 
       const stalkX = w / 2;
       ctx!.strokeStyle = theme.stalk;
@@ -606,7 +633,12 @@ export function ClimbGame() {
           alpha: flash ? 0.55 : 1,
         });
         if (larva.stun > 0) {
-          ctx!.fillStyle = "rgba(255,255,255,0.35)";
+          ctx!.strokeStyle = "rgba(255,253,248,0.85)";
+          ctx!.lineWidth = 3;
+          ctx!.beginPath();
+          ctx!.arc(lx, ly, 28 + Math.sin(larva.wiggle * 4) * 4, 0, Math.PI * 2);
+          ctx!.stroke();
+          ctx!.fillStyle = "rgba(255,255,255,0.4)";
           ctx!.beginPath();
           ctx!.arc(lx, ly, 22, 0, Math.PI * 2);
           ctx!.fill();
@@ -658,7 +690,7 @@ export function ClimbGame() {
       }
       ctx!.textAlign = "start";
 
-      const pTheme = themeAt(player.y);
+      const pTheme = stageTheme;
       const aim = 36 + steerRef.current * (w - 72);
       const tilt = Math.max(-0.35, Math.min(0.35, (aim - player.x) / 140));
       const drawn = drawSprite(ctx!, beanSrc(pTheme, player.mood), player.x, toScreen(player.y), 48, {

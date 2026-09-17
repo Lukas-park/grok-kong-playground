@@ -31,7 +31,7 @@ type Body = {
   key?: boolean;
 };
 
-type Pad = { x: number; y: number; w: number; h: number; kind: "slow" | "fast" };
+type Pad = { x: number; y: number; w: number; h: number; kind: "slow" | "fast"; hit?: boolean };
 
 const FRAMES = 8;
 
@@ -179,10 +179,10 @@ export function BowlGame() {
       }
       if (remix) {
         pads.push({
-          x: w * (0.25 + rng() * 0.3),
-          y: h * (0.45 + rng() * 0.2),
-          w: w * 0.18,
-          h: 24,
+          x: laneLeft() + 8,
+          y: h * (0.5 + rng() * 0.12),
+          w: laneRight() - laneLeft() - 16,
+          h: 80,
           kind: rng() > 0.5 ? "fast" : "slow",
         });
       }
@@ -223,15 +223,29 @@ export function BowlGame() {
 
     function applyPads(dt: number) {
       for (const pad of pads) {
-        if (ball.x < pad.x || ball.x > pad.x + pad.w || ball.y < pad.y || ball.y > pad.y + pad.h) continue;
-        const speed = Math.hypot(ball.vx, ball.vy);
-        if (pad.kind === "slow") {
-          ball.vx *= Math.pow(0.9, dt * 60);
-          ball.vy *= Math.pow(0.9, dt * 60);
-        } else if (speed < 980) {
-          const f = Math.pow(1.05, dt * 60);
-          ball.vx *= f;
-          ball.vy *= f;
+        const inside = ball.x > pad.x && ball.x < pad.x + pad.w && ball.y > pad.y && ball.y < pad.y + pad.h;
+        if (!inside) continue;
+        const speed = Math.hypot(ball.vx, ball.vy) || 1;
+        if (!pad.hit) {
+          pad.hit = true;
+          if (pad.kind === "slow") {
+            const next = Math.max(70, speed * 0.32);
+            ball.vx *= next / speed;
+            ball.vy *= next / speed;
+            sfx.water();
+            trauma = Math.min(1, trauma + 0.25);
+            setHud((prev) => ({ ...prev, message: "SLOW!" }));
+          } else {
+            const next = Math.min(1200, Math.max(speed * 2.15, 520));
+            ball.vx *= next / speed;
+            ball.vy *= next / speed;
+            sfx.strike();
+            trauma = Math.min(1, trauma + 0.35);
+            setHud((prev) => ({ ...prev, message: "FAST!" }));
+          }
+        } else if (pad.kind === "slow") {
+          ball.vx *= Math.pow(0.86, dt * 60);
+          ball.vy *= Math.pow(0.86, dt * 60);
         }
       }
     }
@@ -246,6 +260,7 @@ export function BowlGame() {
       ball.alive = true;
       settling = false;
       waiting = 0;
+      for (const pad of pads) pad.hit = false;
     }
 
     function newFrame() {
@@ -450,15 +465,18 @@ export function BowlGame() {
       ctx!.fill();
 
       for (const pad of pads) {
-        ctx!.fillStyle = pad.kind === "slow" ? "rgba(74, 130, 186, 0.38)" : "rgba(224, 122, 48, 0.4)";
+        const glow = pad.hit ? 0.72 : 0.48;
+        ctx!.fillStyle = pad.kind === "slow" ? `rgba(64, 120, 186, ${glow})` : `rgba(232, 110, 36, ${glow})`;
         ctx!.beginPath();
-        ctx!.roundRect?.(pad.x, pad.y, pad.w, pad.h, 10);
-        if (!ctx!.roundRect) ctx!.rect(pad.x, pad.y, pad.w, pad.h);
+        ctx!.rect(pad.x, pad.y, pad.w, pad.h);
         ctx!.fill();
-        ctx!.fillStyle = pad.kind === "slow" ? "#2f4a28" : "#7a3b12";
-        ctx!.font = "700 11px 'Noto Sans KR', sans-serif";
+        ctx!.strokeStyle = pad.kind === "slow" ? "#2f5f8a" : "#9a3a10";
+        ctx!.lineWidth = 2;
+        ctx!.stroke();
+        ctx!.fillStyle = "#fffdf8";
+        ctx!.font = "800 16px 'Noto Sans KR', sans-serif";
         ctx!.textAlign = "center";
-        ctx!.fillText(pad.kind === "slow" ? "SLOW" : "FAST", pad.x + pad.w / 2, pad.y + pad.h / 2 + 4);
+        ctx!.fillText(pad.kind === "slow" ? "▼ SLOW ▼" : "▲ FAST ▲", pad.x + pad.w / 2, pad.y + pad.h / 2 + 6);
         ctx!.textAlign = "start";
       }
 

@@ -45,6 +45,18 @@ function jitter(n: number, amt: number, rng: Rng) {
   return n + (rng() - 0.5) * amt;
 }
 
+function band(lane: Lane, y: number, kind: "slow" | "fast", rng: Rng): PadSpot {
+  const span = 0.7 + rng() * 0.18;
+  const width = (lane.right - lane.left) * span;
+  return {
+    x: (lane.left + lane.right) / 2 - width / 2,
+    y,
+    w: width,
+    h: 84,
+    kind,
+  };
+}
+
 export function buildStage(id: StageId, lane: Lane, rng: Rng) {
   const { w, h, left, right } = lane;
   const L = left + 28;
@@ -68,7 +80,7 @@ export function buildStage(id: StageId, lane: Lane, rng: Rng) {
   } else if (id === "split") {
     for (let i = 0; i < 4; i++) add(L + 8 + (i % 2) * 30, top + Math.floor(i / 2) * 42, 0.95);
     for (let i = 0; i < 6; i++) add(R - 8 - (i % 3) * 28, top + Math.floor(i / 3) * 40, 0.95);
-    pads.push({ x: w * 0.38, y: h * 0.55, w: w * 0.24, h: 28, kind: "slow" });
+    pads.push(band(lane, h * 0.56, "slow", rng));
   } else if (id === "scatter") {
     let guard = 0;
     while (pins.length < 10 && guard++ < 220) {
@@ -76,15 +88,15 @@ export function buildStage(id: StageId, lane: Lane, rng: Rng) {
       const y = top + rng() * (low - top);
       if (pins.every((q) => Math.hypot(q.x - x, q.y - y) > 34)) add(x, y, 0.92 + rng() * 0.1);
     }
-    pads.push({ x: w * 0.48, y: h * 0.58, w: w * 0.2, h: 28, kind: "fast" });
+    pads.push(band(lane, h * 0.58, "fast", rng));
   } else if (id === "walls") {
     for (let i = 0; i < 5; i++) add(L + 4, top + i * 38, 0.96);
     for (let i = 0; i < 5; i++) add(R - 4, top + 16 + i * 38, 0.96);
-    pads.push({ x: w * 0.3, y: h * 0.5, w: w * 0.18, h: 26, kind: "fast" });
+    pads.push(band(lane, h * 0.52, "fast", rng));
   } else if (id === "zigzag") {
     for (let i = 0; i < 10; i++) add(i % 2 === 0 ? L + 16 : R - 16, top + i * 22, 0.94);
-    pads.push({ x: w * 0.28, y: h * 0.62, w: w * 0.2, h: 26, kind: "slow" });
-    pads.push({ x: w * 0.52, y: h * 0.48, w: w * 0.18, h: 26, kind: "fast" });
+    pads.push(band(lane, h * 0.64, "slow", rng));
+    pads.push(band(lane, h * 0.46, "fast", rng));
   } else if (id === "diamond") {
     add(w / 2, top, 1);
     add(w / 2 - 36, top + 36);
@@ -96,6 +108,7 @@ export function buildStage(id: StageId, lane: Lane, rng: Rng) {
     add(w / 2, low);
     add(w / 2 - 20, low - 18, 0.9);
     add(w / 2 + 20, low - 18, 0.9);
+    pads.push(band(lane, h * 0.58, "fast", rng));
   } else if (id === "guards") {
     add(w / 2 - 34, low + 8, 1.05);
     add(w / 2, low + 18, 1.08);
@@ -107,14 +120,14 @@ export function buildStage(id: StageId, lane: Lane, rng: Rng) {
     add(w / 2 - 32, top + 48);
     add(w / 2, top + 42);
     add(w / 2 + 32, top + 48);
-    pads.push({ x: w * 0.4, y: h * 0.52, w: w * 0.2, h: 24, kind: "slow" });
+    pads.push(band(lane, h * 0.54, "slow", rng));
   } else if (id === "tunnel") {
     for (let i = 0; i < 4; i++) add(L + 10, top + 12 + i * 36);
     for (let i = 0; i < 4; i++) add(R - 10, top + 12 + i * 36);
     add(w / 2, top + 8);
     add(w / 2, low);
-    pads.push({ x: w * 0.36, y: h * 0.46, w: w * 0.28, h: 36, kind: "fast" });
-    pads.push({ x: w * 0.24, y: h * 0.64, w: w * 0.18, h: 24, kind: "slow" });
+    pads.push(band(lane, h * 0.48, "fast", rng));
+    pads.push(band(lane, h * 0.66, "slow", rng));
   } else if (id === "islands") {
     const clusters = [
       { x: L + 24, y: top + 20 },
@@ -128,7 +141,7 @@ export function buildStage(id: StageId, lane: Lane, rng: Rng) {
         add(c.x + Math.cos(a) * 22, c.y + Math.sin(a) * 16, 0.95);
       }
     });
-    pads.push({ x: w * 0.42, y: h * 0.5, w: w * 0.16, h: 28, kind: "fast" });
+    pads.push(band(lane, h * 0.5, "fast", rng));
   } else {
     let guard = 0;
     while (pins.length < 10 && guard++ < 240) {
@@ -136,9 +149,9 @@ export function buildStage(id: StageId, lane: Lane, rng: Rng) {
       const y = top + rng() * (h * 0.48 - top);
       if (pins.every((q) => Math.hypot(q.x - x, q.y - y) > 32)) add(x, y, 0.9 + rng() * 0.14);
     }
-    pads.push({ x: w * (0.22 + rng() * 0.12), y: h * 0.5, w: w * 0.2, h: 30, kind: "slow" });
-    pads.push({ x: w * (0.5 + rng() * 0.1), y: h * 0.62, w: w * 0.2, h: 28, kind: "fast" });
-    if (rng() > 0.4) pads.push({ x: w * 0.34, y: h * 0.42, w: w * 0.16, h: 22, kind: rng() > 0.5 ? "fast" : "slow" });
+    pads.push(band(lane, h * 0.5, "slow", rng));
+    pads.push(band(lane, h * 0.64, "fast", rng));
+    if (rng() > 0.4) pads.push(band(lane, h * 0.4, rng() > 0.5 ? "fast" : "slow", rng));
   }
 
   for (const p of pins) {
@@ -146,8 +159,7 @@ export function buildStage(id: StageId, lane: Lane, rng: Rng) {
     p.y = jitter(p.y, 8, rng);
   }
   for (const pad of pads) {
-    pad.x = jitter(pad.x, 16, rng);
-    pad.y = jitter(pad.y, 12, rng);
+    pad.y = jitter(pad.y, 10, rng);
   }
   return { pins, pads };
 }
