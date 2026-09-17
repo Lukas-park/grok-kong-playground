@@ -23,7 +23,9 @@ type Plat = {
   w: number;
   kind: "leaf" | "spring" | "clover" | "pod" | "giant" | "fly";
   theme: ThemeId;
+  hp: number;
   taken?: boolean;
+  broken?: boolean;
 };
 
 type Particle = {
@@ -35,11 +37,24 @@ type Particle = {
   color: string;
   size: number;
   clover?: boolean;
+  leaf?: boolean;
+  rot?: number;
+  vr?: number;
 };
 
 type Floater = { x: number; y: number; life: number; text: string };
 type Fly = { a: number; x: number; y: number; shot: number; life: number };
 type Dart = { x: number; y: number; vx: number; vy: number; life: number };
+
+const LEAF_GREEN = "#3f8a52";
+const LEAF_RED = "#c45c28";
+const LEAF_YELLOW = "#e8c44d";
+
+function leafFill(hp: number) {
+  if (hp <= 1) return LEAF_YELLOW;
+  if (hp <= 3) return LEAF_RED;
+  return LEAF_GREEN;
+}
 
 const JUMP = 620;
 const SPRING = 920;
@@ -57,6 +72,8 @@ export function ClimbGame() {
   const [overWhy, setOverWhy] = useState<"fall" | "eaten">("fall");
   const [booted, setBooted] = useState(false);
   const [run, setRun] = useState(0);
+  const [knob, setKnob] = useState(0.5);
+  const steerRef = useRef(0.5);
   const climbBest = usePlayground((s) => s.climbBest);
   const recordClimb = usePlayground((s) => s.recordClimb);
   const phaseRef = useRef(phase);
@@ -82,7 +99,7 @@ export function ClimbGame() {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    const pointer = { x: 0, active: false, tap: false };
+    const pointer = { tap: false };
     let w = 390;
     let h = 700;
     let dpr = 1;
@@ -167,7 +184,9 @@ export function ClimbGame() {
       larva.hidden = 0;
       larva.mode = "chase";
       larva.recoil = 0;
-      plats.push({ x: w / 2, y: 40, w: 88, kind: "leaf", theme: "sprout" });
+      steerRef.current = 0.5;
+      setKnob(0.5);
+      plats.push({ x: w / 2, y: 40, w: 88, kind: "leaf", theme: "sprout", hp: 5 });
       THEME_LIST.forEach((theme, zi) => {
         const z0 = 120 + zi * ZONE;
         const z1 = z0 + ZONE - 90;
@@ -191,11 +210,12 @@ export function ClimbGame() {
             w: kind === "giant" ? 150 : 74 + Math.random() * 18,
             kind,
             theme: theme.id,
+            hp: kind === "giant" || kind === "spring" ? 99 : 5,
           });
           y += 76 + Math.random() * 40;
         }
         const topX = w / 2 + (zi % 2 === 0 ? -70 : 70);
-        plats.push({ x: topX, y: z1, w: 96, kind: "pod", theme: theme.id });
+        plats.push({ x: topX, y: z1, w: 96, kind: "pod", theme: theme.id, hp: 5 });
         if (!placedFly && zi >= 1) {
           plats.push({
             x: w / 2 - topX + w / 2,
@@ -203,6 +223,7 @@ export function ClimbGame() {
             w: 78,
             kind: "fly",
             theme: theme.id,
+            hp: 5,
           });
         }
       });
@@ -226,6 +247,9 @@ export function ClimbGame() {
           color,
           size: clover ? 10 + Math.random() * 8 : 2 + Math.random() * 4,
           clover,
+          leaf: false,
+          rot: 0,
+          vr: 0,
         });
       }
     }
@@ -236,6 +260,27 @@ export function ClimbGame() {
       spawnBurst(x, y, "#f4efe4", 10, false);
       spawnBurst(x, y, theme.leaf, 8, true);
       floaters.push({ x, y: y + 24, life: 1.15, text: label });
+    }
+
+    function shatter(p: Plat) {
+      p.broken = true;
+      p.hp = 0;
+      for (let i = 0; i < 8; i++) {
+        const a = -0.2 + Math.random() * Math.PI * 1.2;
+        particles.push({
+          x: p.x + (Math.random() - 0.5) * p.w * 0.8,
+          y: p.y,
+          vx: Math.cos(a) * (50 + Math.random() * 110),
+          vy: 20 + Math.random() * 80,
+          life: 0.75 + Math.random() * 0.45,
+          color: LEAF_YELLOW,
+          size: 7 + Math.random() * 8,
+          leaf: true,
+          rot: Math.random() * Math.PI,
+          vr: (Math.random() - 0.5) * 10,
+        });
+      }
+      sfx.fall();
     }
 
     function grantPod(plat: Plat, worldX: number, worldY: number) {
@@ -303,9 +348,8 @@ export function ClimbGame() {
         tryDoubleJump();
       }
 
-      if (pointer.active) {
-        player.x += (pointer.x - player.x) * (1 - Math.exp(-10 * dt));
-      }
+      const targetX = 36 + steerRef.current * (w - 72);
+      player.x += (targetX - player.x) * (1 - Math.exp(-14 * dt));
       player.x = Math.max(28, Math.min(w - 28, player.x));
       player.vy -= GRAVITY * dt;
       player.y += player.vy * dt;
@@ -313,7 +357,7 @@ export function ClimbGame() {
 
       if (player.vy < 0) {
         for (const p of plats) {
-          if (p.taken) continue;
+          if (p.broken) continue;
           const half = p.w / 2;
           if (Math.abs(player.x - p.x) > half + 8) continue;
           if (player.y > p.y + 18 || player.y < p.y - 10) continue;
@@ -324,23 +368,28 @@ export function ClimbGame() {
           hops += 1;
           trauma = Math.min(1, trauma + (p.kind === "giant" ? 0.45 : 0.12));
           sfx.land();
-          spawnBurst(player.x, player.y, theme.leaf, 8);
-          if (p.kind === "clover") {
+          spawnBurst(player.x, player.y, leafFill(Math.max(1, p.hp - 1)), 8);
+          if (p.kind === "clover" && !p.taken) {
             p.taken = true;
             earned += 2;
             sfx.collect();
             setRunClovers(earned);
             fireworks(player.x, player.y + 20, "클로버 +2");
           }
-          if (p.kind === "pod") {
+          if (p.kind === "pod" && !p.taken) {
             p.taken = true;
             grantPod(p, player.x, player.y + 24);
           }
-          if (p.kind === "fly") {
+          if (p.kind === "fly" && !p.taken) {
             p.taken = true;
             summonFlies(player.x, player.y + 20);
           }
           if (p.kind === "giant") sfx.strike();
+          if (p.kind !== "giant" && p.kind !== "spring") {
+            if (p.hp <= 1) shatter(p);
+            else p.hp -= 1;
+          }
+          break;
         }
       }
 
@@ -437,6 +486,10 @@ export function ClimbGame() {
         pt.x += pt.vx * dt;
         pt.y += pt.vy * dt;
         pt.vy -= 80 * dt;
+        if (pt.leaf) {
+          pt.rot = (pt.rot ?? 0) + (pt.vr ?? 0) * dt;
+          pt.vy -= 220 * dt;
+        }
       }
       for (let i = particles.length - 1; i >= 0; i--) if (particles[i]!.life <= 0) particles.splice(i, 1);
       for (const f of floaters) {
@@ -480,30 +533,39 @@ export function ClimbGame() {
       ctx!.stroke();
 
       for (const p of plats) {
+        if (p.broken) continue;
         const sy = toScreen(p.y);
         if (sy < -80 || sy > h + 80) continue;
-        const leaf = THEMES[p.theme];
+        const fill = p.kind === "giant" || p.kind === "spring" ? THEMES[p.theme].leaf : leafFill(p.hp);
         if (p.kind === "giant") {
           const ok = drawSprite(ctx!, beanSrc(p.theme, "ok"), p.x, sy - 40, 110, { squash: 0.9 });
           if (!ok) drawBean(ctx!, p.x, sy - 48, 56, "ok", { blush: true, squash: 0.9 });
-          ctx!.fillStyle = leaf.leaf;
+          ctx!.fillStyle = fill;
           ctx!.beginPath();
           ctx!.ellipse(p.x, sy + 8, p.w / 2, 14, 0, 0, Math.PI * 2);
           ctx!.fill();
           continue;
         }
-        ctx!.fillStyle = leaf.leaf;
+        ctx!.fillStyle = fill;
         ctx!.beginPath();
         ctx!.ellipse(p.x, sy, p.w / 2, 13, 0.2, 0, Math.PI * 2);
         ctx!.fill();
-        ctx!.strokeStyle = "rgba(255,255,255,0.25)";
+        ctx!.strokeStyle = "rgba(255,255,255,0.28)";
         ctx!.lineWidth = 2;
         ctx!.beginPath();
         ctx!.moveTo(p.x - p.w / 3, sy);
         ctx!.quadraticCurveTo(p.x, sy + 6, p.x + p.w / 3, sy);
         ctx!.stroke();
+        if (p.hp <= 3 && p.hp > 0 && p.kind !== "spring") {
+          ctx!.strokeStyle = "rgba(61,58,54,0.28)";
+          ctx!.beginPath();
+          ctx!.moveTo(p.x - p.w * 0.22, sy - 2);
+          ctx!.lineTo(p.x - 4, sy + 4);
+          ctx!.lineTo(p.x + p.w * 0.18, sy - 1);
+          ctx!.stroke();
+        }
         if (p.kind === "spring") {
-          ctx!.fillStyle = leaf.accent;
+          ctx!.fillStyle = THEMES[p.theme].accent;
           ctx!.fillRect(p.x - 8, sy - 10, 16, 8);
         }
         if (p.kind === "clover" && !p.taken) {
@@ -512,7 +574,7 @@ export function ClimbGame() {
         if (p.kind === "pod" && !p.taken) {
           drawSprite(ctx!, beanSrc(p.theme, 2), p.x, sy - 28, 36);
           if (!drawSprite(ctx!, CLOVER_SPARK, p.x, sy - 44, 22)) {
-            ctx!.fillStyle = leaf.bean;
+            ctx!.fillStyle = THEMES[p.theme].bean;
             ctx!.beginPath();
             ctx!.ellipse(p.x, sy - 26, 12, 16, 0, 0, Math.PI * 2);
             ctx!.fill();
@@ -568,7 +630,16 @@ export function ClimbGame() {
       for (const pt of particles) {
         ctx!.globalAlpha = Math.max(0, pt.life * 1.8);
         if (pt.clover) drawSprite(ctx!, CLOVER_ICON, pt.x, toScreen(pt.y), pt.size);
-        else {
+        else if (pt.leaf) {
+          ctx!.save();
+          ctx!.translate(pt.x, toScreen(pt.y));
+          ctx!.rotate(pt.rot ?? 0);
+          ctx!.fillStyle = pt.color;
+          ctx!.beginPath();
+          ctx!.ellipse(0, 0, pt.size, pt.size * 0.45, 0.3, 0, Math.PI * 2);
+          ctx!.fill();
+          ctx!.restore();
+        } else {
           ctx!.fillStyle = pt.color;
           ctx!.beginPath();
           ctx!.arc(pt.x, toScreen(pt.y), pt.size, 0, Math.PI * 2);
@@ -588,7 +659,8 @@ export function ClimbGame() {
       ctx!.textAlign = "start";
 
       const pTheme = themeAt(player.y);
-      const tilt = Math.max(-0.35, Math.min(0.35, (pointer.x - player.x) / 180));
+      const aim = 36 + steerRef.current * (w - 72);
+      const tilt = Math.max(-0.35, Math.min(0.35, (aim - player.x) / 140));
       const drawn = drawSprite(ctx!, beanSrc(pTheme, player.mood), player.x, toScreen(player.y), 48, {
         squash: player.squash,
         tilt,
@@ -614,22 +686,21 @@ export function ClimbGame() {
     }
     raf = requestAnimationFrame(loop);
 
-    function setPointer(e: PointerEvent, active: boolean) {
-      const rect = canvas!.getBoundingClientRect();
-      pointer.x = e.clientX - rect.left;
-      pointer.active = active;
-    }
     const onDown = (e: PointerEvent) => {
-      canvas!.setPointerCapture(e.pointerId);
-      setPointer(e, true);
+      if (phaseRef.current !== "play") return;
+      e.preventDefault();
       pointer.tap = true;
     };
-    const onMove = (e: PointerEvent) => setPointer(e, pointer.active);
-    const onUp = (e: PointerEvent) => setPointer(e, false);
     const onKey = (e: KeyboardEvent) => {
       if (phaseRef.current !== "play") return;
-      if (e.code === "ArrowLeft" || e.code === "KeyA") player.x -= 24;
-      if (e.code === "ArrowRight" || e.code === "KeyD") player.x += 24;
+      if (e.code === "ArrowLeft" || e.code === "KeyA") {
+        steerRef.current = Math.max(0, steerRef.current - 0.08);
+        setKnob(steerRef.current);
+      }
+      if (e.code === "ArrowRight" || e.code === "KeyD") {
+        steerRef.current = Math.min(1, steerRef.current + 0.08);
+        setKnob(steerRef.current);
+      }
       if (e.code === "Space") {
         e.preventDefault();
         tryDoubleJump();
@@ -637,18 +708,12 @@ export function ClimbGame() {
     };
 
     canvas.addEventListener("pointerdown", onDown);
-    canvas.addEventListener("pointermove", onMove);
-    canvas.addEventListener("pointerup", onUp);
-    canvas.addEventListener("pointercancel", onUp);
     window.addEventListener("keydown", onKey);
 
     return () => {
       cancelAnimationFrame(raf);
       ro.disconnect();
       canvas.removeEventListener("pointerdown", onDown);
-      canvas.removeEventListener("pointermove", onMove);
-      canvas.removeEventListener("pointerup", onUp);
-      canvas.removeEventListener("pointercancel", onUp);
       window.removeEventListener("keydown", onKey);
     };
   }, [recordClimb, run]);
@@ -676,12 +741,44 @@ export function ClimbGame() {
           ) : null}
         </div>
       ) : null}
+      {phase === "play" ? (
+        <div className="absolute inset-x-0 bottom-0 z-10 px-4 pb-[max(0.8rem,env(safe-area-inset-bottom))] pt-1">
+          <p className="mb-1.5 text-center text-[11px] font-medium text-muted-foreground">
+            아래 바만 밀어 이동 · 화면을 탭하면 더블점프
+          </p>
+          <div
+            className="relative h-14 touch-none rounded-full bg-card shadow-lift"
+            onPointerDown={(e) => {
+              e.currentTarget.setPointerCapture(e.pointerId);
+              const rect = e.currentTarget.getBoundingClientRect();
+              const v = Math.max(0, Math.min(1, (e.clientX - rect.left - 28) / (rect.width - 56)));
+              steerRef.current = v;
+              setKnob(v);
+            }}
+            onPointerMove={(e) => {
+              if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
+              const rect = e.currentTarget.getBoundingClientRect();
+              const v = Math.max(0, Math.min(1, (e.clientX - rect.left - 28) / (rect.width - 56)));
+              steerRef.current = v;
+              setKnob(v);
+            }}
+          >
+            <div className="pointer-events-none absolute inset-y-0 left-7 right-7 top-1/2 h-1.5 -translate-y-1/2 rounded-full bg-primary/25" />
+            <img
+              src="/beans/sprout-2.png"
+              alt=""
+              className="pointer-events-none absolute top-1/2 h-12 w-12 -translate-x-1/2 -translate-y-1/2 object-contain"
+              style={{ left: `calc(1.75rem + ${knob} * (100% - 3.5rem))` }}
+            />
+          </div>
+        </div>
+      ) : null}
       {phase !== "play" && booted ? (
         <div className="absolute inset-0 flex flex-col items-center justify-center bg-ink/25 px-6 text-center">
           <div className="w-full max-w-sm rounded-2xl bg-card p-6 shadow-lift">
             {phase === "ready" ? (
               <>
-                <p className="text-sm text-muted-foreground">높이 올라가면 담배거세미가 따라와요. 파리를 모으면 유충을 멈춰요</p>
+                <p className="text-sm text-muted-foreground">아래 바로 움직이고, 노란 잎은 한 번이면 바스러져요</p>
                 <h2 className="mt-1 text-2xl font-semibold">잎을 밟고 올라가요</h2>
                 <p className="mt-2 text-sm text-muted-foreground">최고 {climbBest} m</p>
                 <Button

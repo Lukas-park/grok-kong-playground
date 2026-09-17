@@ -20,7 +20,10 @@ type Body = {
   fallen: boolean;
 };
 
+type Pad = { x: number; y: number; w: number; h: number; kind: "slow" | "fast" };
+
 const FRAMES = 5;
+const LAYOUTS = ["기본 삼각", "두 덩이", "흩어진 핀", "벽 앵글", "지그재그", "난장판"];
 
 function drawPin(
   ctx: CanvasRenderingContext2D,
@@ -51,7 +54,15 @@ function drawPin(
 export function BowlGame() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [phase, setPhase] = useState<"ready" | "play" | "over">("ready");
-  const [hud, setHud] = useState({ frame: 1, throwNo: 1, pins: 10, score: 0, message: "", bonus: 0 });
+  const [hud, setHud] = useState({
+    frame: 1,
+    throwNo: 1,
+    pins: 10,
+    score: 0,
+    message: "",
+    bonus: 0,
+    layout: LAYOUTS[0],
+  });
   const [adOpen, setAdOpen] = useState(false);
   const bowlBest = usePlayground((s) => s.bowlBest);
   const recordBowl = usePlayground((s) => s.recordBowl);
@@ -95,6 +106,9 @@ export function BowlGame() {
     let strikeThisGame = false;
     let trauma = 0;
     let lanePins = 10;
+    let chaos = 0;
+    let layoutName = LAYOUTS[0]!;
+    const pads: Pad[] = [];
 
     const ball: Body = { x: 0, y: 0, ox: 0, oy: 0, vx: 0, vy: 0, r: 26, rot: 0, alive: true, fallen: false };
     const pins: Body[] = [];
@@ -118,32 +132,104 @@ export function BowlGame() {
     const laneRight = () => w * 0.84;
     const ballHome = () => ({ x: w / 2, y: h * 0.86 });
 
+    function addPin(x: number, y: number, scale = 1) {
+      pins.push({
+        x,
+        y,
+        ox: x,
+        oy: y,
+        vx: 0,
+        vy: 0,
+        r: 13 * scale,
+        rot: 0,
+        alive: true,
+        fallen: false,
+      });
+    }
+
+    function scatterPins(count: number, y0: number, y1: number, inset = 26) {
+      const placed: { x: number; y: number }[] = [];
+      let guard = 0;
+      while (placed.length < count && guard++ < 240) {
+        const x = laneLeft() + inset + Math.random() * (laneRight() - laneLeft() - inset * 2);
+        const y = y0 + Math.random() * (y1 - y0);
+        if (placed.every((q) => Math.hypot(q.x - x, q.y - y) > 34)) placed.push({ x, y });
+      }
+      placed.forEach((q) => addPin(q.x, q.y, 0.92 + Math.random() * 0.12));
+    }
+
     function setupPins() {
       pins.length = 0;
-      const rows = [4, 3, 2, 1];
-      const backY = h * 0.16;
-      const gapY = Math.min(48, h * 0.055);
-      const gapX = Math.min(42, w * 0.09);
-      rows.forEach((count, row) => {
-        const y = backY + row * gapY;
-        const rowW = (count - 1) * gapX;
-        const scale = 0.86 + row * 0.05;
-        for (let c = 0; c < count; c++) {
-          pins.push({
-            x: w / 2 - rowW / 2 + c * gapX,
-            y,
-            ox: w / 2 - rowW / 2 + c * gapX,
-            oy: y,
-            vx: 0,
-            vy: 0,
-            r: 13 * scale,
-            rot: 0,
-            alive: true,
-            fallen: false,
-          });
+      pads.length = 0;
+      const tier = Math.min(5, chaos);
+      layoutName = LAYOUTS[tier] ?? "난장판";
+      const left = laneLeft() + 30;
+      const right = laneRight() - 30;
+      const top = h * 0.15;
+      const mid = h * 0.26;
+      const low = h * 0.36;
+
+      if (tier === 0) {
+        const rows = [4, 3, 2, 1];
+        const gapY = Math.min(48, h * 0.055);
+        const gapX = Math.min(42, w * 0.09);
+        rows.forEach((count, row) => {
+          const y = top + row * gapY;
+          const rowW = (count - 1) * gapX;
+          for (let c = 0; c < count; c++) {
+            addPin(w / 2 - rowW / 2 + c * gapX, y, 0.86 + row * 0.05);
+          }
+        });
+      } else if (tier === 1) {
+        for (let i = 0; i < 4; i++) addPin(left + 10 + (i % 2) * 28, top + Math.floor(i / 2) * 40, 0.95);
+        for (let i = 0; i < 6; i++) addPin(right - 10 - (i % 3) * 28, top + Math.floor(i / 3) * 42, 0.95);
+      } else if (tier === 2) {
+        scatterPins(10, top, low);
+      } else if (tier === 3) {
+        for (let i = 0; i < 5; i++) addPin(left + 6, top + i * 38, 0.96);
+        for (let i = 0; i < 5; i++) addPin(right - 6, top + 18 + i * 38, 0.96);
+      } else if (tier === 4) {
+        for (let i = 0; i < 10; i++) {
+          const y = top + i * 22;
+          addPin(i % 2 === 0 ? left + 18 : right - 18, y, 0.94);
         }
-      });
-      lanePins = 10;
+      } else {
+        scatterPins(10, top, h * 0.48, 18);
+      }
+
+      if (tier >= 1) pads.push({ x: w * 0.26, y: h * 0.5, w: w * 0.22, h: 32, kind: "slow" });
+      if (tier >= 2) pads.push({ x: w * 0.52, y: h * 0.6, w: w * 0.2, h: 30, kind: "fast" });
+      if (tier >= 3) pads.push({ x: w * 0.33, y: h * 0.42, w: w * 0.18, h: 26, kind: "slow" });
+      if (tier >= 4) pads.push({ x: w * 0.22, y: h * 0.7, w: w * 0.2, h: 26, kind: "fast" });
+      lanePins = pins.length;
+    }
+
+    function bounceWall(body: Body, rest: number) {
+      const t = Math.max(0, Math.min(1, (body.y - 64) / Math.max(1, h * 0.9 - 64)));
+      const leftX = laneLeft() + 12 * (1 - t);
+      const rightX = laneRight() - 12 * (1 - t);
+      if (body.x - body.r < leftX) {
+        body.x = leftX + body.r;
+        body.vx = Math.abs(body.vx) * rest;
+      } else if (body.x + body.r > rightX) {
+        body.x = rightX - body.r;
+        body.vx = -Math.abs(body.vx) * rest;
+      }
+    }
+
+    function applyPads(dt: number) {
+      for (const pad of pads) {
+        if (ball.x < pad.x || ball.x > pad.x + pad.w || ball.y < pad.y || ball.y > pad.y + pad.h) continue;
+        const speed = Math.hypot(ball.vx, ball.vy);
+        if (pad.kind === "slow") {
+          ball.vx *= Math.pow(0.9, dt * 60);
+          ball.vy *= Math.pow(0.9, dt * 60);
+        } else if (speed < 980) {
+          const f = Math.pow(1.05, dt * 60);
+          ball.vx *= f;
+          ball.vy *= f;
+        }
+      }
     }
 
     function resetBall() {
@@ -218,6 +304,7 @@ export function BowlGame() {
         trauma = 0.7;
         frame += 1;
         throwNo = 1;
+        chaos += 1;
         if (frame > FRAMES) endGame();
         else newFrame();
       } else if (throwNo === 2 || left === 0) {
@@ -225,6 +312,7 @@ export function BowlGame() {
           message = doubled ? "스페어 · 2배" : "스페어";
           bonusShots += 1;
           sfx.collect();
+          chaos += 1;
         }
         frame += 1;
         throwNo = 1;
@@ -241,6 +329,7 @@ export function BowlGame() {
         score,
         message,
         bonus: bonusShots,
+        layout: layoutName,
       });
     }
 
@@ -262,8 +351,14 @@ export function BowlGame() {
         ball.y += ball.vy * dt;
         const speed = Math.hypot(ball.vx, ball.vy);
         ball.rot += (speed / Math.max(8, ball.r)) * dt;
-        ball.vx *= Math.pow(0.985, dt * 60);
-        ball.vy *= Math.pow(0.985, dt * 60);
+        ball.vx *= Math.pow(0.988, dt * 60);
+        ball.vy *= Math.pow(0.988, dt * 60);
+        applyPads(dt);
+        bounceWall(ball, 0.9);
+        if (ball.y < 48) {
+          ball.vy = Math.abs(ball.vy) * 0.72;
+          ball.y = 48;
+        }
         for (const p of pins) {
           if (!p.alive) continue;
           p.x += p.vx * dt;
@@ -271,23 +366,16 @@ export function BowlGame() {
           p.rot += Math.hypot(p.vx, p.vy) * dt * 0.04;
           p.vx *= Math.pow(0.96, dt * 60);
           p.vy *= Math.pow(0.96, dt * 60);
+          bounceWall(p, 0.72);
           if (!p.fallen && (Math.hypot(p.x - p.ox, p.y - p.oy) > 22 || Math.hypot(p.vx, p.vy) > 120)) {
             p.fallen = true;
             sfx.pin();
             trauma = Math.min(1, trauma + 0.12);
           }
-          if (p.x < laneLeft() - 8 || p.x > laneRight() + 8 || p.y < 40 || p.y > h * 0.72) {
+          if (p.y < 28 || p.y > h * 0.78) {
             p.alive = false;
             p.fallen = true;
           }
-        }
-        if (ball.x < laneLeft() || ball.x > laneRight()) {
-          ball.vx *= 0.4;
-          ball.x = Math.max(laneLeft(), Math.min(laneRight(), ball.x));
-        }
-        if (ball.y < 50) {
-          ball.vy *= -0.2;
-          ball.y = 50;
         }
         for (let i = 0; i < pins.length; i++) {
           for (let j = i + 1; j < pins.length; j++) {
@@ -331,6 +419,35 @@ export function BowlGame() {
       ctx!.lineTo(laneRight(), h * 0.94);
       ctx!.closePath();
       ctx!.fill();
+
+      ctx!.fillStyle = "#8a6a48";
+      ctx!.beginPath();
+      ctx!.moveTo(laneLeft() - 10, h * 0.94);
+      ctx!.lineTo(laneLeft() + 8, 72);
+      ctx!.lineTo(laneLeft() + 18, 72);
+      ctx!.lineTo(laneLeft() + 6, h * 0.94);
+      ctx!.closePath();
+      ctx!.fill();
+      ctx!.beginPath();
+      ctx!.moveTo(laneRight() + 10, h * 0.94);
+      ctx!.lineTo(laneRight() - 8, 72);
+      ctx!.lineTo(laneRight() - 18, 72);
+      ctx!.lineTo(laneRight() - 6, h * 0.94);
+      ctx!.closePath();
+      ctx!.fill();
+
+      for (const pad of pads) {
+        ctx!.fillStyle = pad.kind === "slow" ? "rgba(74, 130, 186, 0.38)" : "rgba(224, 122, 48, 0.4)";
+        ctx!.beginPath();
+        ctx!.roundRect?.(pad.x, pad.y, pad.w, pad.h, 10);
+        if (!ctx!.roundRect) ctx!.rect(pad.x, pad.y, pad.w, pad.h);
+        ctx!.fill();
+        ctx!.fillStyle = pad.kind === "slow" ? "#2f4a28" : "#7a3b12";
+        ctx!.font = "700 11px 'Noto Sans KR', sans-serif";
+        ctx!.textAlign = "center";
+        ctx!.fillText(pad.kind === "slow" ? "SLOW" : "FAST", pad.x + pad.w / 2, pad.y + pad.h / 2 + 4);
+        ctx!.textAlign = "start";
+      }
 
       ctx!.strokeStyle = theme.accent;
       ctx!.globalAlpha = 0.28;
@@ -453,7 +570,7 @@ export function BowlGame() {
       {phase === "play" ? (
         <div className="pointer-events-none absolute left-0 right-0 top-2 flex justify-center">
           <div className="rounded-full bg-card/90 px-4 py-1.5 text-xs font-medium tabular-nums shadow-soft">
-            {hud.frame}/{FRAMES}프레임 · {hud.throwNo}번째 · {hud.score}점
+            {hud.frame}/{FRAMES}프레임 · {hud.layout} · {hud.throwNo}번째 · {hud.score}점
             {hud.bonus > 0 ? ` · 다음 ${hud.bonus}투 2배` : ""}
             {hud.message ? ` · ${hud.message}` : ""}
           </div>
@@ -465,14 +582,14 @@ export function BowlGame() {
               <>
                 <p className="text-sm text-muted-foreground">콩을 뒤로 당겼다 놓으면 데굴데굴 굴러가요</p>
                 <h2 className="mt-1 text-2xl font-semibold">데굴데굴 콩볼링</h2>
-                <p className="text-sm text-muted-foreground">스트라이크는 다음 두 투구, 스페어는 다음 한 투구가 2배예요</p>
+                <p className="text-sm text-muted-foreground">스트라이크·스페어 다음엔 핀이 흩어지고, 벽에 튕길 수 있어요</p>
                 <Button
                   className="mt-5 w-full"
                   onClick={() => {
                     unlockAudio();
                     setRun((n) => n + 1);
                     setPhase("play");
-                    setHud({ frame: 1, throwNo: 1, pins: 10, score: 0, message: "", bonus: 0 });
+                    setHud({ frame: 1, throwNo: 1, pins: 10, score: 0, message: "", bonus: 0, layout: LAYOUTS[0]! });
                   }}
                 >
                   굴리기
@@ -487,7 +604,7 @@ export function BowlGame() {
                   onClick={() => {
                     setRun((n) => n + 1);
                     setPhase("play");
-                    setHud({ frame: 1, throwNo: 1, pins: 10, score: 0, message: "", bonus: 0 });
+                    setHud({ frame: 1, throwNo: 1, pins: 10, score: 0, message: "", bonus: 0, layout: LAYOUTS[0]! });
                   }}
                 >
                   다시 굴리기
