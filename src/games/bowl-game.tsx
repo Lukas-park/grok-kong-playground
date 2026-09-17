@@ -9,6 +9,8 @@ import { THEMES, type ThemeId } from "@/lib/themes";
 type Body = {
   x: number;
   y: number;
+  ox: number;
+  oy: number;
   vx: number;
   vy: number;
   r: number;
@@ -48,7 +50,7 @@ function drawPin(
 export function BowlGame() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [phase, setPhase] = useState<"ready" | "play" | "over">("ready");
-  const [hud, setHud] = useState({ frame: 1, throwNo: 1, pins: 10, score: 0, message: "" });
+  const [hud, setHud] = useState({ frame: 1, throwNo: 1, pins: 10, score: 0, message: "", bonus: 0 });
   const [adOpen, setAdOpen] = useState(false);
   const bowlBest = usePlayground((s) => s.bowlBest);
   const recordBowl = usePlayground((s) => s.recordBowl);
@@ -78,11 +80,12 @@ export function BowlGame() {
     let frame = 1;
     let throwNo = 1;
     let score = 0;
+    let bonusShots = 0;
     let strikeThisGame = false;
     let trauma = 0;
     let lanePins = 10;
 
-    const ball: Body = { x: 0, y: 0, vx: 0, vy: 0, r: 26, rot: 0, alive: true, fallen: false };
+    const ball: Body = { x: 0, y: 0, ox: 0, oy: 0, vx: 0, vy: 0, r: 26, rot: 0, alive: true, fallen: false };
     const pins: Body[] = [];
 
     function resize() {
@@ -118,6 +121,8 @@ export function BowlGame() {
           pins.push({
             x: w / 2 - rowW / 2 + c * gapX,
             y,
+            ox: w / 2 - rowW / 2 + c * gapX,
+            oy: y,
             vx: 0,
             vy: 0,
             r: 13 * scale,
@@ -177,27 +182,38 @@ export function BowlGame() {
       return pins.filter((p) => p.alive && !p.fallen).length;
     }
 
+    function clearFallenPins() {
+      for (const p of pins) {
+        if (p.fallen) p.alive = false;
+      }
+    }
+
     function finishThrow() {
       const left = standing();
       const knocked = lanePins - left;
       lanePins = left;
-      score += knocked;
-      let message = knocked === 0 ? "거터에 가까워요" : `${knocked}개`;
+      const doubled = bonusShots > 0;
+      if (bonusShots > 0) bonusShots -= 1;
+      const gained = knocked * (doubled ? 2 : 1);
+      score += gained;
+      clearFallenPins();
+
+      let message = knocked === 0 ? "거터예요" : doubled ? `2배 ${gained}점` : `${gained}점`;
       if (throwNo === 1 && left === 0) {
-        message = "스트라이크";
+        message = doubled ? "스트라이크 · 2배" : "스트라이크";
         strikeThisGame = true;
+        bonusShots += 2;
         sfx.strike();
         trauma = 0.7;
-        score += 5;
         frame += 1;
         throwNo = 1;
         if (frame > FRAMES) endGame();
         else newFrame();
       } else if (throwNo === 2 || left === 0) {
         if (left === 0) {
-          message = "스페어";
+          message = doubled ? "스페어 · 2배" : "스페어";
+          bonusShots += 1;
           sfx.collect();
-          score += 2;
         }
         frame += 1;
         throwNo = 1;
@@ -207,7 +223,14 @@ export function BowlGame() {
         throwNo = 2;
         resetBall();
       }
-      setHud({ frame: Math.min(frame, FRAMES), throwNo, pins: left, score, message });
+      setHud({
+        frame: Math.min(frame, FRAMES),
+        throwNo,
+        pins: left,
+        score,
+        message,
+        bonus: bonusShots,
+      });
     }
 
     function endGame() {
@@ -237,7 +260,7 @@ export function BowlGame() {
           p.rot += Math.hypot(p.vx, p.vy) * dt * 0.04;
           p.vx *= Math.pow(0.96, dt * 60);
           p.vy *= Math.pow(0.96, dt * 60);
-          if (Math.hypot(p.vx, p.vy) > 40 && !p.fallen) {
+          if (!p.fallen && (Math.hypot(p.x - p.ox, p.y - p.oy) > 22 || Math.hypot(p.vx, p.vy) > 120)) {
             p.fallen = true;
             sfx.pin();
             trauma = Math.min(1, trauma + 0.12);
@@ -419,6 +442,7 @@ export function BowlGame() {
         <div className="pointer-events-none absolute left-0 right-0 top-2 flex justify-center">
           <div className="rounded-full bg-card/90 px-4 py-1.5 text-xs font-medium tabular-nums shadow-soft">
             {hud.frame}/{FRAMES}프레임 · {hud.throwNo}번째 · {hud.score}점
+            {hud.bonus > 0 ? ` · 다음 ${hud.bonus}투 2배` : ""}
             {hud.message ? ` · ${hud.message}` : ""}
           </div>
         </div>
@@ -429,14 +453,14 @@ export function BowlGame() {
               <>
                 <p className="text-sm text-muted-foreground">콩을 뒤로 당겼다 놓으면 데굴데굴 굴러가요</p>
                 <h2 className="mt-1 text-2xl font-semibold">데굴데굴 콩볼링</h2>
-                <p className="mt-2 text-sm text-muted-foreground">5프레임 · 최고 {bowlBest}점</p>
+                <p className="text-sm text-muted-foreground">스트라이크는 다음 두 투구, 스페어는 다음 한 투구가 2배예요</p>
                 <Button
                   className="mt-5 w-full"
                   onClick={() => {
                     unlockAudio();
                     setRun((n) => n + 1);
                     setPhase("play");
-                    setHud({ frame: 1, throwNo: 1, pins: 10, score: 0, message: "" });
+                    setHud({ frame: 1, throwNo: 1, pins: 10, score: 0, message: "", bonus: 0 });
                   }}
                 >
                   굴리기
@@ -451,7 +475,7 @@ export function BowlGame() {
                   onClick={() => {
                     setRun((n) => n + 1);
                     setPhase("play");
-                    setHud({ frame: 1, throwNo: 1, pins: 10, score: 0, message: "" });
+                    setHud({ frame: 1, throwNo: 1, pins: 10, score: 0, message: "", bonus: 0 });
                   }}
                 >
                   다시 굴리기

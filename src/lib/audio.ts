@@ -56,4 +56,12 @@ export const sfx = {
     tone(784, 0.22, "sine", 0.05);
   },
   water: () => tone(480, 0.14, "sine", 0.05, 80),
+  buzz: () => {
+    tone(310, 0.07, "square", 0.03);
+    tone(520, 0.09, "triangle", 0.03);
+  },
+  eat: () => {
+    tone(160, 0.28, "sawtooth", 0.05, -80);
+    tone(90, 0.35, "triangle", 0.04, -40);
+  },
 };

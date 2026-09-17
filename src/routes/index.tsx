@@ -125,7 +125,7 @@ function Lobby() {
           <PlayCard
             to="/climb"
             title="쑥쑥 콩나무"
-            copy="잎을 밟고, 공중에서 탭하면 한 번 더 뛰어요"
+            copy="테마 꼭대기 열매, 담배거세미, 공중 더블점프"
             best={`${climbBest} m`}
             beanMood="best"
             theme={equipped}
