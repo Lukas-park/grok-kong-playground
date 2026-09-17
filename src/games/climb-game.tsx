@@ -2,17 +2,20 @@ import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   beanSrc,
+  climbAssetList,
+  climbBootAssets,
   CLOVER_ICON,
   CLOVER_SPARK,
   drawSprite,
   FLY_SPRITE,
   LARVA_SPRITE,
-  preloadTheme,
+  waitForImages,
 } from "@/lib/assets";
 import { sfx, unlockAudio } from "@/lib/audio";
 import { drawBean, drawClover } from "@/lib/draw-bean";
 import { usePlayground } from "@/lib/store";
 import { THEME_LIST, THEMES, type Mood, type ThemeId } from "@/lib/themes";
+import { GameBoot } from "@/components/game-boot";
 
 type Plat = {
   x: number;
@@ -35,7 +38,7 @@ type Particle = {
 };
 
 type Floater = { x: number; y: number; life: number; text: string };
-type Fly = { a: number; x: number; y: number; shot: number };
+type Fly = { a: number; x: number; y: number; shot: number; life: number };
 type Dart = { x: number; y: number; vx: number; vy: number; life: number };
 
 const JUMP = 620;
@@ -52,6 +55,7 @@ export function ClimbGame() {
   const [jumpCd, setJumpCd] = useState(0);
   const [threat, setThreat] = useState("");
   const [overWhy, setOverWhy] = useState<"fall" | "eaten">("fall");
+  const [booted, setBooted] = useState(false);
   const [run, setRun] = useState(0);
   const climbBest = usePlayground((s) => s.climbBest);
   const recordClimb = usePlayground((s) => s.recordClimb);
@@ -62,11 +66,21 @@ export function ClimbGame() {
   }, [phase]);
 
   useEffect(() => {
+    let live = true;
+    waitForImages(climbBootAssets()).then(() => {
+      if (live) setBooted(true);
+      void waitForImages(climbAssetList());
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-    THEME_LIST.forEach((t) => preloadTheme(t.id));
 
     const pointer = { x: 0, active: false, tap: false };
     let w = 390;
@@ -98,7 +112,16 @@ export function ClimbGame() {
       mood: "good" as Mood,
     };
 
-    const larva = { alive: false, y: 0, stun: 0, wiggle: 0 };
+    const larva = {
+      alive: false,
+      y: 0,
+      stun: 0,
+      wiggle: 0,
+      hidden: 0,
+      mode: "chase" as "chase" | "dash" | "recoil",
+      dashTo: 0,
+      recoil: 0,
+    };
 
     function themeAt(y: number): ThemeId {
       const zi = Math.min(THEME_LIST.length - 1, Math.max(0, Math.floor(Math.max(0, y - 80) / ZONE)));
@@ -141,6 +164,9 @@ export function ClimbGame() {
       larva.alive = false;
       larva.y = 0;
       larva.stun = 0;
+      larva.hidden = 0;
+      larva.mode = "chase";
+      larva.recoil = 0;
       plats.push({ x: w / 2, y: 40, w: 88, kind: "leaf", theme: "sprout" });
       THEME_LIST.forEach((theme, zi) => {
         const z0 = 120 + zi * ZONE;
@@ -222,11 +248,10 @@ export function ClimbGame() {
     function summonFlies(worldX: number, worldY: number) {
       flies.length = 0;
       for (let i = 0; i < 3; i++) {
-        flies.push({ a: i * 2.1, x: worldX, y: worldY, shot: 0.15 * i });
+        flies.push({ a: i * 2.1, x: worldX, y: worldY, shot: 0.15 * i, life: 3.4 });
       }
       fireworks(worldX, worldY, "긴등기생파리", "#5a4638");
       sfx.buzz();
-      if (larva.alive) larva.stun = Math.max(larva.stun, 1.2);
     }
 
     function tryDoubleJump() {
@@ -261,7 +286,15 @@ export function ClimbGame() {
         setJumpCd(extraCd);
         if (larva.alive) {
           const gap = player.y - larva.y;
-          setThreat(larva.stun > 0 ? "유충이 멈췄어요" : gap < 140 ? "따라잡히고 있어요" : "담배거세미가 올라와요");
+          setThreat(
+            larva.stun > 0
+              ? `유충이 멈췄어요 ${Math.max(0, larva.stun).toFixed(1)}초`
+              : larva.mode === "dash"
+                ? "파바박 올라와요"
+                : gap < 140
+                  ? "따라잡히고 있어요"
+                  : "담배거세미가 올라와요",
+          );
         } else setThreat("");
       }
 
@@ -318,17 +351,48 @@ export function ClimbGame() {
 
       if (!larva.alive && maxY > ZONE * 0.85) {
         larva.alive = true;
-        larva.y = Math.max(40, player.y - 280);
+        larva.y = Math.max(40, player.y - 220);
         larva.stun = 0;
+        larva.hidden = 0;
+        larva.mode = "chase";
         floaters.push({ x: w / 2, y: larva.y + 40, life: 1.6, text: "담배거세미가 따라와요" });
         sfx.eat();
       }
       if (larva.alive) {
-        larva.wiggle += dt * (larva.stun > 0 ? 1.2 : 6);
-        const zi = Math.min(THEME_LIST.length - 1, Math.floor(Math.max(0, player.y) / ZONE));
-        const climb = 82 + zi * 11;
-        if (larva.stun > 0) larva.stun -= dt;
-        else larva.y += climb * dt;
+        const stunned = larva.stun > 0;
+        larva.wiggle += dt * (stunned ? 1.2 : larva.mode === "dash" ? 18 : 6);
+        if (stunned) {
+          larva.stun = Math.max(0, larva.stun - dt);
+        } else if (larva.mode === "dash") {
+          larva.y += 1280 * dt;
+          if (Math.random() < 0.25) spawnBurst(w / 2, larva.y - 10, "#3d3a36", 1);
+          if (larva.y >= larva.dashTo) {
+            larva.y = larva.dashTo;
+            larva.mode = "recoil";
+            larva.recoil = 0.48;
+          }
+        } else if (larva.mode === "recoil") {
+          larva.recoil -= dt;
+          larva.y -= 160 * dt;
+          if (larva.recoil <= 0) larva.mode = "chase";
+        } else {
+          const zi = Math.min(THEME_LIST.length - 1, Math.floor(Math.max(0, player.y) / ZONE));
+          larva.y += (70 + zi * 8) * dt;
+          const onScreen = larva.y > cameraY - 24 && larva.y < cameraY + h + 20;
+          if (!onScreen && larva.y < cameraY) {
+            larva.hidden += dt;
+            if (larva.hidden >= 1) {
+              larva.hidden = 0;
+              larva.mode = "dash";
+              larva.dashTo = Math.min(player.y - 92, cameraY + h * 0.22);
+              floaters.push({ x: w / 2, y: larva.y + 30, life: 0.8, text: "파바박" });
+              sfx.strike();
+            }
+          } else {
+            larva.hidden = 0;
+            if (larva.y < cameraY + 28) larva.y += (cameraY + 28 - larva.y) * Math.min(1, dt * 2);
+          }
+        }
         if (larva.y + 20 >= player.y) {
           endRun("eaten");
           return;
@@ -337,13 +401,14 @@ export function ClimbGame() {
 
       const stalkX = w / 2;
       for (const f of flies) {
+        f.life -= dt;
         f.a += dt * 3.2;
         const tx = (larva.alive ? stalkX + 16 : player.x) + Math.cos(f.a) * 34;
         const ty = (larva.alive ? larva.y + 36 : player.y + 18) + Math.sin(f.a) * 22;
         f.x += (tx - f.x) * (1 - Math.exp(-8 * dt));
         f.y += (ty - f.y) * (1 - Math.exp(-8 * dt));
         f.shot -= dt;
-        if (larva.alive && f.shot <= 0) {
+        if (larva.alive && f.life > 0 && f.shot <= 0) {
           f.shot = 0.42;
           const dx = stalkX - f.x;
           const dy = larva.y - f.y;
@@ -352,13 +417,14 @@ export function ClimbGame() {
           sfx.buzz();
         }
       }
+      for (let i = flies.length - 1; i >= 0; i--) if (flies[i]!.life <= 0) flies.splice(i, 1);
       for (const d of darts) {
         d.life -= dt;
         d.x += d.vx * dt;
         d.y += d.vy * dt;
         if (larva.alive && Math.hypot(d.x - stalkX, d.y - larva.y) < 28) {
           d.life = 0;
-          larva.stun = 3.6;
+          if (larva.stun <= 0) larva.stun = 3;
           trauma = Math.min(1, trauma + 0.2);
           spawnBurst(stalkX, larva.y, "#5a4638", 14);
           sfx.pin();
@@ -461,6 +527,16 @@ export function ClimbGame() {
         const ly = toScreen(larva.y);
         const lx = stalkX + Math.sin(larva.wiggle) * 8;
         const flash = larva.stun > 0 && Math.floor(larva.wiggle * 8) % 2 === 0;
+        if (larva.mode === "dash") {
+          ctx!.strokeStyle = "rgba(61,58,54,0.35)";
+          ctx!.lineWidth = 3;
+          for (let i = 1; i <= 3; i++) {
+            ctx!.beginPath();
+            ctx!.moveTo(lx, ly + 12 + i * 10);
+            ctx!.lineTo(lx, ly + 28 + i * 16);
+            ctx!.stroke();
+          }
+        }
         drawSprite(ctx!, LARVA_SPRITE, lx, ly, 120, {
           width: 132,
           height: 36,
@@ -584,6 +660,7 @@ export function ClimbGame() {
         className="absolute inset-0 h-full w-full touch-none"
         style={{ touchAction: "none" }}
       />
+      <GameBoot ready={booted} label="콩나무를 키우는 중" />
       {phase === "play" ? (
         <div className="pointer-events-none absolute inset-x-0 top-2 flex flex-col items-center gap-1.5">
           <div className="rounded-full bg-card/90 px-4 py-1.5 text-xs font-medium tabular-nums shadow-soft">
@@ -599,7 +676,7 @@ export function ClimbGame() {
           ) : null}
         </div>
       ) : null}
-      {phase !== "play" ? (
+      {phase !== "play" && booted ? (
         <div className="absolute inset-0 flex flex-col items-center justify-center bg-ink/25 px-6 text-center">
           <div className="w-full max-w-sm rounded-2xl bg-card p-6 shadow-lift">
             {phase === "ready" ? (

@@ -1,4 +1,4 @@
-import type { Mood, ThemeId } from "@/lib/themes";
+import { THEME_LIST, type Mood, type ThemeId } from "@/lib/themes";
 
 export const MOOD_INDEX: Record<Mood, number> = {
   worst: 1,
@@ -14,7 +14,7 @@ export function beanSrc(theme: ThemeId, mood: Mood | number) {
 }
 
 export function themeBg(theme: ThemeId) {
-  return `/themes/${theme}.png`;
+  return `/themes/${theme}.jpg`;
 }
 
 export const CLOVER_ICON = "/icons/clover.png";
@@ -29,6 +29,7 @@ export function getImage(src: string) {
   let img = cache.get(src);
   if (img) return img;
   img = new Image();
+  img.decoding = "async";
   img.src = src;
   cache.set(src, img);
   return img;
@@ -37,11 +38,47 @@ export function getImage(src: string) {
 export function preloadTheme(theme: ThemeId) {
   getImage(themeBg(theme));
   getImage(CLOVER_ICON);
-  getImage(CLOVER_SPARK);
-  getImage(BEAN_BALL);
-  getImage(LARVA_SPRITE);
-  getImage(FLY_SPRITE);
   (["best", "good", "ok", "bad", "worst"] as Mood[]).forEach((m) => getImage(beanSrc(theme, m)));
+}
+
+export function climbBootAssets() {
+  return [
+    LARVA_SPRITE,
+    FLY_SPRITE,
+    CLOVER_ICON,
+    CLOVER_SPARK,
+    beanSrc("sprout", 1),
+    beanSrc("sprout", 2),
+    beanSrc("sprout", 3),
+    beanSrc("sprout", 4),
+    beanSrc("sprout", 5),
+  ];
+}
+
+export function climbAssetList() {
+  const srcs = climbBootAssets();
+  for (const t of THEME_LIST) {
+    if (t.id === "sprout") continue;
+    for (let n = 1; n <= 5; n++) srcs.push(beanSrc(t.id, n));
+  }
+  return srcs;
+}
+
+export function bowlAssetList() {
+  return [BEAN_BALL, CLOVER_ICON];
+}
+
+export function waitForImages(srcs: string[], timeoutMs = 6000) {
+  const imgs = srcs.map(getImage);
+  return new Promise<void>((resolve) => {
+    const start = performance.now();
+    const tick = () => {
+      const ready = imgs.every((img) => img.complete);
+      if (ready || performance.now() - start > timeoutMs) resolve();
+      else requestAnimationFrame(tick);
+    };
+    tick();
+  });
 }
 
 export function drawSprite(

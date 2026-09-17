@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { AdModal } from "@/components/ad-modal";
+import { GameBoot } from "@/components/game-boot";
 import { Button } from "@/components/ui/button";
-import { BEAN_BALL, CLOVER_ICON, drawSprite, preloadTheme } from "@/lib/assets";
+import { BEAN_BALL, CLOVER_ICON, bowlAssetList, drawSprite, waitForImages } from "@/lib/assets";
 import { sfx, unlockAudio } from "@/lib/audio";
 import { usePlayground } from "@/lib/store";
 import { THEMES, type ThemeId } from "@/lib/themes";
@@ -57,17 +58,27 @@ export function BowlGame() {
   const unlockTheme = usePlayground((s) => s.unlockTheme);
   const phaseRef = useRef(phase);
   const [run, setRun] = useState(0);
+  const [booted, setBooted] = useState(false);
 
   useEffect(() => {
     phaseRef.current = phase;
   }, [phase]);
 
   useEffect(() => {
+    let live = true;
+    waitForImages(bowlAssetList()).then(() => {
+      if (live) setBooted(true);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-    preloadTheme(usePlayground.getState().equippedTheme);
 
     let w = 390;
     let h = 700;
@@ -438,6 +449,7 @@ export function BowlGame() {
   return (
     <div className="absolute inset-0 min-h-0">
       <canvas ref={canvasRef} className="absolute inset-0 h-full w-full touch-none" style={{ touchAction: "none" }} />
+      <GameBoot ready={booted} label="레인을 닦는 중" />
       {phase === "play" ? (
         <div className="pointer-events-none absolute left-0 right-0 top-2 flex justify-center">
           <div className="rounded-full bg-card/90 px-4 py-1.5 text-xs font-medium tabular-nums shadow-soft">
@@ -446,7 +458,7 @@ export function BowlGame() {
             {hud.message ? ` · ${hud.message}` : ""}
           </div>
         </div>
-      ) : (
+      ) : booted ? (
         <div className="absolute inset-0 flex items-center justify-center bg-ink/25 px-6">
           <div className="w-full max-w-sm rounded-2xl bg-card p-6 text-center shadow-lift">
             {phase === "ready" ? (
@@ -484,7 +496,7 @@ export function BowlGame() {
             )}
           </div>
         </div>
-      )}
+      ) : null}
       <AdModal
         open={adOpen}
         title="스트라이크 기념 광고"
