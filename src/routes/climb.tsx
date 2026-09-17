@@ -6,7 +6,7 @@ export const Route = createFileRoute("/climb")({ component: ClimbPage });
 
 function ClimbPage() {
   return (
-    <GameShell title="쑥쑥 콩나무" subtitle="좌우로 밀어 잎을 밟아요">
+    <GameShell title="쑥쑥 콩나무" subtitle="좌우로 밀고, 공중에서 탭하면 더블점프">
       <ClimbGame />
     </GameShell>
   );

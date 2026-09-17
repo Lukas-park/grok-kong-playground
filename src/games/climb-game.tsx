@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { AdModal } from "@/components/ad-modal";
 import { Button } from "@/components/ui/button";
-import { beanSrc, CLOVER_ICON, drawSprite, preloadTheme } from "@/lib/assets";
+import { beanSrc, CLOVER_ICON, CLOVER_SPARK, drawSprite, preloadTheme } from "@/lib/assets";
 import { sfx, unlockAudio } from "@/lib/audio";
 import { drawBean, drawClover } from "@/lib/draw-bean";
 import { usePlayground } from "@/lib/store";
@@ -15,23 +14,34 @@ type Plat = {
   taken?: boolean;
 };
 
-type Particle = { x: number; y: number; vx: number; vy: number; life: number; color: string };
+type Particle = {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  life: number;
+  color: string;
+  size: number;
+  clover?: boolean;
+};
+
+type Floater = { x: number; y: number; life: number; text: string };
 
 const JUMP = 620;
 const SPRING = 920;
 const GRAVITY = 1480;
+const DOUBLE_CD = 3;
 
 export function ClimbGame() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [phase, setPhase] = useState<"ready" | "play" | "over">("ready");
   const [height, setHeight] = useState(0);
   const [runClovers, setRunClovers] = useState(0);
-  const [podOffer, setPodOffer] = useState(false);
+  const [jumpCd, setJumpCd] = useState(0);
   const [run, setRun] = useState(0);
   const equipped = usePlayground((s) => s.equippedTheme);
   const climbBest = usePlayground((s) => s.climbBest);
   const recordClimb = usePlayground((s) => s.recordClimb);
-  const unlockTheme = usePlayground((s) => s.unlockTheme);
   const phaseRef = useRef(phase);
 
   useEffect(() => {
@@ -45,7 +55,7 @@ export function ClimbGame() {
     if (!ctx) return;
     preloadTheme(equipped);
 
-    const pointer = { x: 0, active: false };
+    const pointer = { x: 0, active: false, tap: false };
     let w = 390;
     let h = 700;
     let dpr = 1;
@@ -56,8 +66,12 @@ export function ClimbGame() {
     let cameraY = 0;
     let maxY = 0;
     let earned = 0;
-    let podFound = false;
+    let extraCd = 0;
+    let groundedUntil = 0;
+    let hops = 0;
+    let hudTick = 0;
     const particles: Particle[] = [];
+    const floaters: Floater[] = [];
     const plats: Plat[] = [];
 
     const player = {
@@ -87,6 +101,7 @@ export function ClimbGame() {
     function resetWorld() {
       plats.length = 0;
       particles.length = 0;
+      floaters.length = 0;
       player.x = w / 2;
       player.y = 90;
       player.vx = 0;
@@ -95,11 +110,13 @@ export function ClimbGame() {
       cameraY = 0;
       maxY = 0;
       earned = 0;
-      podFound = false;
+      extraCd = 0;
+      groundedUntil = 0;
+      hops = 0;
       trauma = 0;
       plats.push({ x: w / 2, y: 40, w: 88, kind: "leaf" });
       let y = 140;
-      while (y < 4200) {
+      while (y < 5200) {
         const side = Math.random() < 0.5 ? -1 : 1;
         const x = w / 2 + side * (40 + Math.random() * Math.min(110, w * 0.28));
         let kind: Plat["kind"] = "leaf";
@@ -118,24 +135,74 @@ export function ClimbGame() {
       return h - (y - cameraY);
     }
 
-    function spawnBurst(x: number, y: number, color: string, n = 10) {
+    function spawnBurst(x: number, y: number, color: string, n = 10, clover = false) {
       for (let i = 0; i < n; i++) {
         const a = Math.random() * Math.PI * 2;
-        const s = 40 + Math.random() * 120;
+        const s = 80 + Math.random() * 220;
         particles.push({
           x,
           y,
           vx: Math.cos(a) * s,
-          vy: Math.sin(a) * s,
-          life: 0.45 + Math.random() * 0.3,
+          vy: Math.sin(a) * s + 40,
+          life: 0.45 + Math.random() * 0.55,
           color,
+          size: clover ? 10 + Math.random() * 8 : 2 + Math.random() * 4,
+          clover,
         });
       }
+    }
+
+    function fireworks(x: number, y: number, label: string) {
+      const theme = THEMES[usePlayground.getState().equippedTheme];
+      spawnBurst(x, y, theme.accent, 18, false);
+      spawnBurst(x, y, "#f4efe4", 10, false);
+      spawnBurst(x, y, theme.leaf, 8, true);
+      floaters.push({ x, y: y + 24, life: 1.1, text: label });
+    }
+
+    function grantPod(worldX: number, worldY: number) {
+      const store = usePlayground.getState();
+      const locked = (Object.keys(THEMES) as ThemeId[]).find((id) => !store.unlockedThemes.includes(id));
+      if (locked) {
+        store.unlockTheme(locked, "ad");
+        fireworks(worldX, worldY, THEMES[locked].name);
+        sfx.unlock();
+      } else {
+        store.addClovers(12);
+        earned += 12;
+        setRunClovers(earned);
+        fireworks(worldX, worldY, "클로버 +12");
+        sfx.collect();
+      }
+    }
+
+    function tryDoubleJump() {
+      if (phaseRef.current !== "play") return;
+      if (extraCd > 0) return;
+      if (hops < 1) return;
+      if (groundedUntil > 0) return;
+      player.vy = Math.max(player.vy, 0) + JUMP * 0.92;
+      player.squash = 0.78;
+      extraCd = DOUBLE_CD;
+      sfx.jump();
+      spawnBurst(player.x, player.y, THEMES[usePlayground.getState().equippedTheme].accent, 12);
     }
 
     function step(dt: number) {
       if (phaseRef.current !== "play") return;
       const theme = THEMES[usePlayground.getState().equippedTheme];
+      extraCd = Math.max(0, extraCd - dt);
+      groundedUntil = Math.max(0, groundedUntil - dt);
+      hudTick += dt;
+      if (hudTick > 0.08) {
+        hudTick = 0;
+        setJumpCd(extraCd);
+      }
+
+      if (pointer.tap) {
+        pointer.tap = false;
+        tryDoubleJump();
+      }
 
       if (pointer.active) {
         const target = pointer.x;
@@ -156,6 +223,8 @@ export function ClimbGame() {
           player.y = py + 16;
           player.vy = p.kind === "spring" || p.kind === "giant" ? SPRING : JUMP;
           player.squash = 0.72;
+          groundedUntil = 0.12;
+          hops += 1;
           trauma = Math.min(1, trauma + (p.kind === "giant" ? 0.45 : 0.12));
           sfx.land();
           spawnBurst(player.x, player.y, theme.leaf, 8);
@@ -164,12 +233,11 @@ export function ClimbGame() {
             earned += 2;
             sfx.collect();
             setRunClovers(earned);
+            fireworks(player.x, player.y + 20, "클로버 +2");
           }
-          if (p.kind === "pod" && !podFound) {
+          if (p.kind === "pod") {
             p.taken = true;
-            podFound = true;
-            sfx.collect();
-            setPodOffer(true);
+            grantPod(player.x, player.y + 24);
           }
           if (p.kind === "giant") sfx.strike();
         }
@@ -184,18 +252,24 @@ export function ClimbGame() {
         pt.life -= dt;
         pt.x += pt.vx * dt;
         pt.y += pt.vy * dt;
-        pt.vy -= 40 * dt;
+        pt.vy -= 80 * dt;
       }
       for (let i = particles.length - 1; i >= 0; i--) {
         if (particles[i]!.life <= 0) particles.splice(i, 1);
       }
+      for (const f of floaters) {
+        f.life -= dt;
+        f.y += 40 * dt;
+      }
+      for (let i = floaters.length - 1; i >= 0; i--) {
+        if (floaters[i]!.life <= 0) floaters.splice(i, 1);
+      }
 
-      const meters = Math.floor(maxY / 10);
-      setHeight(meters);
+      setHeight(Math.floor(maxY / 10));
 
       if (player.y < cameraY - 40) {
         sfx.fall();
-        recordClimb(meters, earned);
+        recordClimb(Math.floor(maxY / 10), earned);
         setPhase("over");
       }
     }
@@ -261,21 +335,37 @@ export function ClimbGame() {
           if (!drawSprite(ctx!, CLOVER_ICON, p.x, sy - 22, 26)) drawClover(ctx!, p.x, sy - 22, 12);
         }
         if (p.kind === "pod" && !p.taken) {
-          ctx!.fillStyle = theme.bean;
-          ctx!.beginPath();
-          ctx!.ellipse(p.x, sy - 26, 12, 16, 0, 0, Math.PI * 2);
-          ctx!.fill();
+          if (!drawSprite(ctx!, CLOVER_SPARK, p.x, sy - 26, 32)) {
+            ctx!.fillStyle = theme.bean;
+            ctx!.beginPath();
+            ctx!.ellipse(p.x, sy - 26, 12, 16, 0, 0, Math.PI * 2);
+            ctx!.fill();
+          }
         }
       }
 
       for (const pt of particles) {
-        ctx!.globalAlpha = Math.max(0, pt.life * 2);
-        ctx!.fillStyle = pt.color;
-        ctx!.beginPath();
-        ctx!.arc(pt.x, toScreen(pt.y), 3, 0, Math.PI * 2);
-        ctx!.fill();
+        ctx!.globalAlpha = Math.max(0, pt.life * 1.8);
+        if (pt.clover) {
+          drawSprite(ctx!, CLOVER_ICON, pt.x, toScreen(pt.y), pt.size);
+        } else {
+          ctx!.fillStyle = pt.color;
+          ctx!.beginPath();
+          ctx!.arc(pt.x, toScreen(pt.y), pt.size, 0, Math.PI * 2);
+          ctx!.fill();
+        }
         ctx!.globalAlpha = 1;
       }
+
+      ctx!.font = "700 14px 'Noto Sans KR', sans-serif";
+      ctx!.textAlign = "center";
+      for (const f of floaters) {
+        ctx!.globalAlpha = Math.max(0, f.life);
+        ctx!.fillStyle = theme.ink;
+        ctx!.fillText(f.text, f.x, toScreen(f.y));
+        ctx!.globalAlpha = 1;
+      }
+      ctx!.textAlign = "start";
 
       const tilt = Math.max(-0.35, Math.min(0.35, (pointer.x - player.x) / 180));
       const tId = usePlayground.getState().equippedTheme;
@@ -315,7 +405,7 @@ export function ClimbGame() {
     const onDown = (e: PointerEvent) => {
       canvas!.setPointerCapture(e.pointerId);
       setPointer(e, true);
-      if (phaseRef.current === "play") sfx.jump();
+      pointer.tap = true;
     };
     const onMove = (e: PointerEvent) => setPointer(e, pointer.active);
     const onUp = (e: PointerEvent) => setPointer(e, false);
@@ -323,6 +413,10 @@ export function ClimbGame() {
       if (phaseRef.current !== "play") return;
       if (e.code === "ArrowLeft" || e.code === "KeyA") player.x -= 24;
       if (e.code === "ArrowRight" || e.code === "KeyD") player.x += 24;
+      if (e.code === "Space") {
+        e.preventDefault();
+        tryDoubleJump();
+      }
     };
 
     canvas.addEventListener("pointerdown", onDown);
@@ -342,21 +436,20 @@ export function ClimbGame() {
     };
   }, [recordClimb, run, equipped]);
 
-  const locked = Object.keys(THEMES).find(
-    (id) => !usePlayground.getState().unlockedThemes.includes(id as ThemeId),
-  ) as ThemeId | undefined;
-
   return (
-    <div className="relative h-full min-h-0">
+    <div className="absolute inset-0 min-h-0">
       <canvas
         ref={canvasRef}
-        className="block h-full w-full touch-none"
+        className="absolute inset-0 h-full w-full touch-none"
         style={{ touchAction: "none" }}
       />
       {phase === "play" ? (
-        <div className="pointer-events-none absolute left-0 right-0 top-2 flex justify-center">
+        <div className="pointer-events-none absolute inset-x-0 top-2 flex flex-col items-center gap-1.5">
           <div className="rounded-full bg-card/90 px-4 py-1.5 text-xs font-medium tabular-nums shadow-soft">
             {height} m · 클로버 +{runClovers}
+          </div>
+          <div className="rounded-full bg-card/80 px-3 py-1 text-[11px] font-medium tabular-nums text-muted-foreground shadow-soft">
+            {jumpCd <= 0 ? "탭하면 더블점프" : `더블점프 ${jumpCd.toFixed(1)}초`}
           </div>
         </div>
       ) : null}
@@ -365,7 +458,7 @@ export function ClimbGame() {
           <div className="w-full max-w-sm rounded-2xl bg-card p-6 shadow-lift">
             {phase === "ready" ? (
               <>
-                <p className="text-sm text-muted-foreground">손가락을 좌우로 밀어 콩을 옮겨요</p>
+                <p className="text-sm text-muted-foreground">좌우로 밀고, 공중에서 탭하면 한 번 더 뛰어요</p>
                 <h2 className="mt-1 text-2xl font-semibold">잎을 밟고 올라가요</h2>
                 <p className="mt-2 text-sm text-muted-foreground">최고 {climbBest} m</p>
                 <Button
@@ -375,6 +468,7 @@ export function ClimbGame() {
                     setRun((n) => n + 1);
                     setRunClovers(0);
                     setHeight(0);
+                    setJumpCd(0);
                     setPhase("play");
                   }}
                 >
@@ -386,7 +480,13 @@ export function ClimbGame() {
                 <p className="text-sm text-muted-foreground">이번 높이</p>
                 <h2 className="mt-1 text-3xl font-semibold tabular-nums">{height} m</h2>
                 <p className="mt-2 text-sm text-muted-foreground">클로버 +{runClovers}</p>
-                <Button className="mt-5 w-full" onClick={() => { setRun((n) => n + 1); setPhase("play"); }}>
+                <Button
+                  className="mt-5 w-full"
+                  onClick={() => {
+                    setRun((n) => n + 1);
+                    setPhase("play");
+                  }}
+                >
                   다시 오르기
                 </Button>
               </>
@@ -394,17 +494,6 @@ export function ClimbGame() {
           </div>
         </div>
       ) : null}
-      <AdModal
-        open={podOffer}
-        title="테마 열매를 땄어요"
-        reward={locked ? `${THEMES[locked].name} 테마를 받을 수 있어요` : "클로버 20개를 받아요"}
-        onClose={() => setPodOffer(false)}
-        onComplete={() => {
-          if (locked) unlockTheme(locked, "ad");
-          else usePlayground.getState().addClovers(20);
-          setPodOffer(false);
-        }}
-      />
     </div>
   );
 }

@@ -18,8 +18,8 @@ export function GameShell({ title, subtitle, extra, children, className }: Props
   const clovers = usePlayground((s) => s.clovers);
 
   return (
-    <div className={cn("flex min-h-dvh flex-col bg-background text-foreground", className)}>
-      <header className="flex items-center gap-3 px-4 pb-2 pt-[max(0.75rem,env(safe-area-inset-top))]">
+    <div className={cn("flex h-dvh max-h-dvh flex-col overflow-hidden bg-background text-foreground", className)}>
+      <header className="flex shrink-0 items-center gap-3 px-4 pb-2 pt-[max(0.75rem,env(safe-area-inset-top))]">
         <Button variant="ghost" size="icon" className="shrink-0" asChild>
           <Link to="/" aria-label="놀이터로">
             <ArrowLeft />
@@ -35,7 +35,7 @@ export function GameShell({ title, subtitle, extra, children, className }: Props
         </div>
         {extra}
       </header>
-      <div className="relative min-h-0 flex-1">{children}</div>
+      <div className="relative min-h-0 flex-1 overscroll-none">{children}</div>
     </div>
   );
 }

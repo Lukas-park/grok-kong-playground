@@ -1,11 +1,11 @@
 import type { Mood, ThemeId } from "@/lib/themes";
 
 export const MOOD_INDEX: Record<Mood, number> = {
-  best: 1,
-  good: 2,
+  worst: 1,
+  bad: 2,
   ok: 3,
-  bad: 4,
-  worst: 5,
+  good: 4,
+  best: 5,
 };
 
 export function beanSrc(theme: ThemeId, mood: Mood | number) {
@@ -18,6 +18,8 @@ export function themeBg(theme: ThemeId) {
 }
 
 export const CLOVER_ICON = "/icons/clover.png";
+export const CLOVER_SPARK = "/icons/clover-spark.png";
+export const BEAN_BALL = "/games/bean-ball.png";
 
 const cache = new Map<string, HTMLImageElement>();
 
@@ -33,6 +35,8 @@ export function getImage(src: string) {
 export function preloadTheme(theme: ThemeId) {
   getImage(themeBg(theme));
   getImage(CLOVER_ICON);
+  getImage(CLOVER_SPARK);
+  getImage(BEAN_BALL);
   (["best", "good", "ok", "bad", "worst"] as Mood[]).forEach((m) => getImage(beanSrc(theme, m)));
 }
 

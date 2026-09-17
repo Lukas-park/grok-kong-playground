@@ -3,11 +3,11 @@ export type ThemeId = "sprout" | "chick" | "halloween" | "moon" | "maple" | "lav
 export type Mood = "best" | "good" | "ok" | "bad" | "worst";
 
 export const MOODS: { id: Mood; label: string; fill: string; face: string }[] = [
-  { id: "best", label: "최고", fill: "#8ed14b", face: "#2f4a28" },
-  { id: "good", label: "좋음", fill: "#61ae72", face: "#2f4a28" },
+  { id: "worst", label: "최악", fill: "#8ed14b", face: "#2f4a28" },
+  { id: "bad", label: "별로", fill: "#61ae72", face: "#2f4a28" },
   { id: "ok", label: "보통", fill: "#e8c44d", face: "#5a4316" },
-  { id: "bad", label: "별로", fill: "#c4b09a", face: "#4a4038" },
-  { id: "worst", label: "최악", fill: "#8a8a8a", face: "#2e2e2e" },
+  { id: "good", label: "좋음", fill: "#c4b09a", face: "#4a4038" },
+  { id: "best", label: "최고", fill: "#8a8a8a", face: "#2e2e2e" },
 ];
 
 export const THEMES: Record<

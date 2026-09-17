@@ -1,11 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { AdModal } from "@/components/ad-modal";
 import { Button } from "@/components/ui/button";
-import { beanSrc, CLOVER_ICON, drawSprite, preloadTheme } from "@/lib/assets";
+import { BEAN_BALL, CLOVER_ICON, drawSprite, preloadTheme } from "@/lib/assets";
 import { sfx, unlockAudio } from "@/lib/audio";
-import { drawBean } from "@/lib/draw-bean";
 import { usePlayground } from "@/lib/store";
-import { THEMES, type Mood, type ThemeId } from "@/lib/themes";
+import { THEMES, type ThemeId } from "@/lib/themes";
 
 type Body = {
   x: number;
@@ -13,20 +12,44 @@ type Body = {
   vx: number;
   vy: number;
   r: number;
+  rot: number;
   alive: boolean;
-  mood: Mood;
   fallen: boolean;
 };
 
-const MOOD_CYCLE: Mood[] = ["best", "good", "ok", "bad", "worst", "good", "best", "ok", "good", "best"];
 const FRAMES = 5;
+
+function drawPin(
+  ctx: CanvasRenderingContext2D,
+  p: Body,
+) {
+  ctx.save();
+  ctx.translate(p.x, p.y);
+  ctx.rotate(p.fallen ? 1.2 + p.rot * 0.15 : p.rot * 0.04);
+  const h = p.r * 3.6;
+  const w = p.r * 1.45;
+  ctx.beginPath();
+  ctx.moveTo(0, -h * 0.5);
+  ctx.bezierCurveTo(w * 0.36, -h * 0.5, w * 0.4, -h * 0.2, w * 0.26, -h * 0.08);
+  ctx.bezierCurveTo(w * 0.58, 0.04 * h, w * 0.6, h * 0.42, 0, h * 0.5);
+  ctx.bezierCurveTo(-w * 0.6, h * 0.42, -w * 0.58, 0.04 * h, -w * 0.26, -h * 0.08);
+  ctx.bezierCurveTo(-w * 0.4, -h * 0.2, -w * 0.36, -h * 0.5, 0, -h * 0.5);
+  ctx.fillStyle = "#fffdf8";
+  ctx.fill();
+  ctx.strokeStyle = "#d9d0c4";
+  ctx.lineWidth = 1.6;
+  ctx.stroke();
+  ctx.fillStyle = "#61ae72";
+  ctx.fillRect(-w * 0.22, -h * 0.1, w * 0.44, 5);
+  drawSprite(ctx, CLOVER_ICON, 0, -h * 0.28, p.r * 1.55);
+  ctx.restore();
+}
 
 export function BowlGame() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [phase, setPhase] = useState<"ready" | "play" | "over">("ready");
   const [hud, setHud] = useState({ frame: 1, throwNo: 1, pins: 10, score: 0, message: "" });
   const [adOpen, setAdOpen] = useState(false);
-  const equipped = usePlayground((s) => s.equippedTheme);
   const bowlBest = usePlayground((s) => s.bowlBest);
   const recordBowl = usePlayground((s) => s.recordBowl);
   const unlockTheme = usePlayground((s) => s.unlockTheme);
@@ -59,7 +82,7 @@ export function BowlGame() {
     let trauma = 0;
     let lanePins = 10;
 
-    const ball: Body = { x: 0, y: 0, vx: 0, vy: 0, r: 22, alive: true, mood: "good", fallen: false };
+    const ball: Body = { x: 0, y: 0, vx: 0, vy: 0, r: 26, rot: 0, alive: true, fallen: false };
     const pins: Body[] = [];
 
     function resize() {
@@ -77,30 +100,29 @@ export function BowlGame() {
     const ro = new ResizeObserver(resize);
     if (canvas.parentElement) ro.observe(canvas.parentElement);
 
-    const laneLeft = () => w * 0.18;
-    const laneRight = () => w * 0.82;
-    const pinY = () => h * 0.2;
-    const ballHome = () => ({ x: w / 2, y: h * 0.82 });
+    const laneLeft = () => w * 0.16;
+    const laneRight = () => w * 0.84;
+    const ballHome = () => ({ x: w / 2, y: h * 0.86 });
 
     function setupPins() {
       pins.length = 0;
-      const rows = [1, 2, 3, 4];
-      let i = 0;
-      const startY = pinY();
-      const gapX = Math.min(36, w * 0.08);
-      const gapY = 34;
+      const rows = [4, 3, 2, 1];
+      const backY = h * 0.16;
+      const gapY = Math.min(48, h * 0.055);
+      const gapX = Math.min(42, w * 0.09);
       rows.forEach((count, row) => {
-        const y = startY + row * gapY;
+        const y = backY + row * gapY;
         const rowW = (count - 1) * gapX;
+        const scale = 0.86 + row * 0.05;
         for (let c = 0; c < count; c++) {
           pins.push({
             x: w / 2 - rowW / 2 + c * gapX,
             y,
             vx: 0,
             vy: 0,
-            r: 16,
+            r: 13 * scale,
+            rot: 0,
             alive: true,
-            mood: MOOD_CYCLE[i++]!,
             fallen: false,
           });
         }
@@ -114,6 +136,7 @@ export function BowlGame() {
       ball.y = home.y;
       ball.vx = 0;
       ball.vy = 0;
+      ball.rot = 0;
       ball.alive = true;
       settling = false;
       waiting = 0;
@@ -203,12 +226,15 @@ export function BowlGame() {
         waiting += dt;
         ball.x += ball.vx * dt;
         ball.y += ball.vy * dt;
+        const speed = Math.hypot(ball.vx, ball.vy);
+        ball.rot += (speed / Math.max(8, ball.r)) * dt;
         ball.vx *= Math.pow(0.985, dt * 60);
         ball.vy *= Math.pow(0.985, dt * 60);
         for (const p of pins) {
           if (!p.alive) continue;
           p.x += p.vx * dt;
           p.y += p.vy * dt;
+          p.rot += Math.hypot(p.vx, p.vy) * dt * 0.04;
           p.vx *= Math.pow(0.96, dt * 60);
           p.vy *= Math.pow(0.96, dt * 60);
           if (Math.hypot(p.vx, p.vy) > 40 && !p.fallen) {
@@ -225,9 +251,9 @@ export function BowlGame() {
           ball.vx *= 0.4;
           ball.x = Math.max(laneLeft(), Math.min(laneRight(), ball.x));
         }
-        if (ball.y < 60) {
+        if (ball.y < 50) {
           ball.vy *= -0.2;
-          ball.y = 60;
+          ball.y = 50;
         }
         for (let i = 0; i < pins.length; i++) {
           for (let j = i + 1; j < pins.length; j++) {
@@ -254,51 +280,50 @@ export function BowlGame() {
       ctx!.fillStyle = g;
       ctx!.fillRect(0, 0, w, h);
 
-      ctx!.fillStyle = "rgba(90,70,40,0.18)";
+      ctx!.fillStyle = "rgba(90,70,40,0.16)";
       ctx!.beginPath();
-      ctx!.moveTo(laneLeft() - 18, h);
-      ctx!.lineTo(laneLeft(), 70);
-      ctx!.lineTo(laneRight(), 70);
-      ctx!.lineTo(laneRight() + 18, h);
+      ctx!.moveTo(laneLeft() - 22, h);
+      ctx!.lineTo(laneLeft() + 10, 56);
+      ctx!.lineTo(laneRight() - 10, 56);
+      ctx!.lineTo(laneRight() + 22, h);
       ctx!.closePath();
       ctx!.fill();
 
       ctx!.fillStyle = theme.paper;
       ctx!.beginPath();
-      ctx!.moveTo(laneLeft(), h * 0.92);
-      ctx!.lineTo(laneLeft() + 8, 90);
-      ctx!.lineTo(laneRight() - 8, 90);
-      ctx!.lineTo(laneRight(), h * 0.92);
+      ctx!.moveTo(laneLeft(), h * 0.94);
+      ctx!.lineTo(laneLeft() + 14, 72);
+      ctx!.lineTo(laneRight() - 14, 72);
+      ctx!.lineTo(laneRight(), h * 0.94);
       ctx!.closePath();
       ctx!.fill();
 
       ctx!.strokeStyle = theme.accent;
-      ctx!.globalAlpha = 0.35;
+      ctx!.globalAlpha = 0.28;
       ctx!.setLineDash([8, 10]);
       ctx!.beginPath();
-      ctx!.moveTo(w / 2, 100);
-      ctx!.lineTo(w / 2, h * 0.78);
+      ctx!.moveTo(w / 2, 88);
+      ctx!.lineTo(w / 2, h * 0.8);
       ctx!.stroke();
       ctx!.setLineDash([]);
       ctx!.globalAlpha = 1;
 
-      const tId = usePlayground.getState().equippedTheme;
       for (const p of pins) {
         if (!p.alive) continue;
-        const src = beanSrc(tId, p.mood);
-        const ok = drawSprite(ctx!, src, p.x, p.y, p.r * 2.4, {
-          tilt: p.fallen ? 0.9 : 0,
-          squash: p.fallen ? 0.7 : 1,
-          alpha: p.fallen ? 0.7 : 1,
-        });
-        if (!ok) drawBean(ctx!, p.x, p.y, p.r, p.mood, { tilt: p.fallen ? 0.8 : 0 });
+        ctx!.globalAlpha = p.fallen ? 0.7 : 1;
+        drawPin(ctx!, p);
+        ctx!.globalAlpha = 1;
       }
 
-      const bsrc = beanSrc(tId, "good");
-      const ballOk = drawSprite(ctx!, bsrc, ball.x, ball.y, ball.r * 2.6, {
-        tilt: Math.hypot(ball.vx, ball.vy) * 0.002,
+      const ballOk = drawSprite(ctx!, BEAN_BALL, ball.x, ball.y, ball.r * 2.35, {
+        tilt: ball.rot,
       });
-      if (!ballOk) drawBean(ctx!, ball.x, ball.y, ball.r, "good");
+      if (!ballOk) {
+        ctx!.fillStyle = "#61ae72";
+        ctx!.beginPath();
+        ctx!.arc(ball.x, ball.y, ball.r, 0, Math.PI * 2);
+        ctx!.fill();
+      }
 
       if (pointer.down && phaseRef.current === "play" && !settling) {
         ctx!.strokeStyle = theme.accent;
@@ -315,7 +340,6 @@ export function BowlGame() {
         ctx!.fill();
       }
 
-      drawSprite(ctx!, CLOVER_ICON, 28, 28, 22);
       ctx!.restore();
     }
 
@@ -389,8 +413,8 @@ export function BowlGame() {
   );
 
   return (
-    <div className="relative h-full min-h-0">
-      <canvas ref={canvasRef} className="block h-full w-full touch-none" style={{ touchAction: "none" }} />
+    <div className="absolute inset-0 min-h-0">
+      <canvas ref={canvasRef} className="absolute inset-0 h-full w-full touch-none" style={{ touchAction: "none" }} />
       {phase === "play" ? (
         <div className="pointer-events-none absolute left-0 right-0 top-2 flex justify-center">
           <div className="rounded-full bg-card/90 px-4 py-1.5 text-xs font-medium tabular-nums shadow-soft">
@@ -403,7 +427,7 @@ export function BowlGame() {
           <div className="w-full max-w-sm rounded-2xl bg-card p-6 text-center shadow-lift">
             {phase === "ready" ? (
               <>
-                <p className="text-sm text-muted-foreground">콩을 뒤로 당겼다 놓으면 굴러가요</p>
+                <p className="text-sm text-muted-foreground">콩을 뒤로 당겼다 놓으면 데굴데굴 굴러가요</p>
                 <h2 className="mt-1 text-2xl font-semibold">데굴데굴 콩볼링</h2>
                 <p className="mt-2 text-sm text-muted-foreground">5프레임 · 최고 {bowlBest}점</p>
                 <Button
